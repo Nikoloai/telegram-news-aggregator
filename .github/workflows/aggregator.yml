@@ -68,6 +68,9 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Verify Telegram bot access
+        run: python -m scripts.check_telegram_access
+
       - name: Aggregate
         shell: bash
         run: |
