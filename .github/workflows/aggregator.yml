@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TNEWS_AGGREGATOR_BOT || secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TNEWS_AGGREGATOR_BOT }}
       TELEGRAM_CHANNEL: ${{ vars.TELEGRAM_CHANNEL || '@GVOZDIchKAAA' }}
       REVIEW_CHAT_ID: ${{ secrets.REVIEW_CHAT_ID }}
       REVIEW_MODE: ${{ vars.REVIEW_MODE || 'true' }}
