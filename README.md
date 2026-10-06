@@ -152,7 +152,8 @@ REVIEW_MODE=true
 
 В **Settings → Secrets and variables → Actions** добавьте secrets:
 
-- `TELEGRAM_BOT_TOKEN` — токен Bot API;
+- `TNEWS_AGGREGATOR_BOT` — токен Bot API в текущей настройке репозитория;
+- `TELEGRAM_BOT_TOKEN` — резервное стандартное имя, если первый secret отсутствует;
 - `REVIEW_CHAT_ID` — приватный review-чат;
 - `LLM_API_KEY` — необязательно, fallback работает без него.
 
@@ -188,7 +189,7 @@ General → Workflow permissions → Read and write permissions**.
 Не меняйте код. После проверки previews:
 
 1. убедитесь, что бот — администратор `@GVOZDIchKAAA`;
-2. проверьте `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHANNEL`;
+2. проверьте `TNEWS_AGGREGATOR_BOT` (либо резервный `TELEGRAM_BOT_TOKEN`) и `TELEGRAM_CHANNEL`;
 3. оставьте review включённым ещё на несколько плановых запусков;
 4. измените repository variable `REVIEW_MODE` с `true` на `false`;
 5. вручную запустите workflow с `dry_run=false` и проверьте одну публикацию;
