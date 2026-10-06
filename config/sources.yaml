@@ -1,0 +1,30 @@
+sources:
+  - name: Mediazona
+    feed_url: https://zona.media/rss
+    homepage: https://zona.media/
+    enabled: true
+    max_items: 30
+
+  - name: ОВД-Инфо
+    feed_url: https://ovd.info/rss.xml
+    homepage: https://ovd.info/
+    enabled: true
+    max_items: 30
+
+  - name: Настоящее Время
+    feed_url: https://www.currenttime.tv/api/zgbip_l-vomx-tpe-v_py
+    homepage: https://www.currenttime.tv/
+    enabled: true
+    max_items: 30
+
+  - name: Meduza
+    feed_url: https://meduza.io/rss/all
+    homepage: https://meduza.io/
+    enabled: true
+    max_items: 30
+
+  - name: The Insider
+    feed_url: https://theins.ru/feed
+    homepage: https://theins.ru/
+    enabled: true
+    max_items: 30
