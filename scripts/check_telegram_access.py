@@ -15,7 +15,14 @@ def main() -> int:
         logging.info("Проверка Telegram пропущена: токен или канал не настроены")
         return 0
 
-    access = TelegramClient(token).check_channel_access(channel)
+    try:
+        access = TelegramClient(token).check_channel_access(channel)
+    except Exception as exc:
+        logging.error(
+            "Проверка Telegram не удалась (%s). Проверьте TELEGRAM_BOT_TOKEN в GitHub Secrets",
+            type(exc).__name__,
+        )
+        return 1
     logging.info(
         "Telegram bot=@%s channel=%s status=%s can_post_messages=%s",
         access.username,
