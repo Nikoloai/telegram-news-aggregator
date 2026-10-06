@@ -148,6 +148,11 @@ REVIEW_MODE=true
   публиковать сообщения, не отправляя тестовый пост;
 - публичный канал не используется.
 
+При автопубликации workflow проверяет источники каждый час, публикует не более одного
+материала за запуск и не более 10 материалов за календарные сутки по часовому поясу
+`Europe/Moscow`. Лимиты настраиваются переменными `MAX_ITEMS_PER_RUN`,
+`DAILY_POST_LIMIT` и `POST_TIMEZONE`.
+
 ## GitHub Secrets, Variables и Actions
 
 В **Settings → Secrets and variables → Actions** добавьте secrets:

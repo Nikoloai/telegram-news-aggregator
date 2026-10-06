@@ -5,7 +5,9 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from dotenv import load_dotenv
@@ -29,6 +31,23 @@ def env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def publication_day_window(
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        if timezone_name != "Europe/Moscow":
+            raise
+        zone = timezone(timedelta(hours=3), name="Europe/Moscow")
+    current = now_utc or datetime.now(timezone.utc)
+    local_now = current.astimezone(zone)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local_start + timedelta(days=1)
+    return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
 @dataclass(slots=True)
@@ -88,8 +107,33 @@ def run(args: argparse.Namespace) -> RunStats:
     channel = os.getenv("TELEGRAM_CHANNEL", "@GVOZDIchKAAA").strip()
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     telegram = TelegramClient(token) if token else None
+    daily_limit = max(0, int(os.getenv("DAILY_POST_LIMIT", "10")))
+    post_timezone = os.getenv("POST_TIMEZONE", "Europe/Moscow").strip()
+    published_today = 0
+    effective_max_items = args.max_items
 
     try:
+        if not args.dry_run and not review_mode and daily_limit:
+            day_start, day_end = publication_day_window(post_timezone)
+            published_today = storage.count_published_between(day_start, day_end)
+            remaining = max(0, daily_limit - published_today)
+            if remaining == 0:
+                LOGGER.info(
+                    "Дневной лимит достигнут: published=%d limit=%d timezone=%s",
+                    published_today,
+                    daily_limit,
+                    post_timezone,
+                )
+                return stats
+            effective_max_items = min(effective_max_items, remaining)
+            LOGGER.info(
+                "Лимит публикаций: published=%d remaining=%d limit=%d timezone=%s",
+                published_today,
+                remaining,
+                daily_limit,
+                post_timezone,
+            )
+
         items = collector.collect_all(sources)
         items.sort(
             key=lambda item: item.published_at.timestamp() if item.published_at else 0,
@@ -148,6 +192,8 @@ def run(args: argparse.Namespace) -> RunStats:
                     message_id = telegram.send(destination, post)
                     status = "SENT_TO_REVIEW" if review_mode else "PUBLISHED"
                     stats.sent += 1
+                    if status == "PUBLISHED":
+                        published_today += 1
                 except Exception as exc:
                     status = "SEND_FAILED"
                     LOGGER.error("Telegram-отправка не удалась: %s", type(exc).__name__)
@@ -166,7 +212,7 @@ def run(args: argparse.Namespace) -> RunStats:
                 topic_match.topics,
                 telegram_message_id=message_id,
             )
-            if produced >= args.max_items:
+            if produced >= effective_max_items:
                 break
     finally:
         storage.close()

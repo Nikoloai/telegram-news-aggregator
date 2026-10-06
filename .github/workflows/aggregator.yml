@@ -31,6 +31,9 @@ jobs:
       LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4.1-mini' }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      MAX_ITEMS_PER_RUN: ${{ vars.MAX_ITEMS_PER_RUN || '1' }}
+      DAILY_POST_LIMIT: ${{ vars.DAILY_POST_LIMIT || '10' }}
+      POST_TIMEZONE: ${{ vars.POST_TIMEZONE || 'Europe/Moscow' }}
       STATE_DB: data/state.db
 
     steps:

@@ -57,6 +57,17 @@ class Storage:
             )
         )
 
+    def count_published_between(self, start_utc: datetime, end_utc: datetime) -> int:
+        row = self.connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM articles
+            WHERE status = 'PUBLISHED' AND updated_at >= ? AND updated_at < ?
+            """,
+            (start_utc.isoformat(), end_utc.isoformat()),
+        ).fetchone()
+        return int(row["total"])
+
     def save(
         self,
         item: FeedItem,
