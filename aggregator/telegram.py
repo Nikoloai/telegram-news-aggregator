@@ -88,15 +88,19 @@ class TelegramClient:
             )
         return list(channels.values())
 
-    def check_channel_access(self, chat_id: str) -> TelegramAccess:
+    def get_identity(self) -> tuple[int, str]:
         bot = self._request("getMe")
-        member = self._request("getChatMember", chat_id=chat_id, user_id=bot["id"])
+        return int(bot["id"]), str(bot.get("username", ""))
+
+    def check_channel_access(self, chat_id: str) -> TelegramAccess:
+        bot_id, username = self.get_identity()
+        member = self._request("getChatMember", chat_id=chat_id, user_id=bot_id)
         status = str(member.get("status", "unknown"))
         can_post = status == "creator" or (
             status == "administrator" and bool(member.get("can_post_messages"))
         )
         return TelegramAccess(
-            username=str(bot.get("username", "")),
+            username=username,
             status=status,
             can_post_messages=can_post,
         )

@@ -16,6 +16,8 @@ def main() -> int:
         return 0
 
     try:
+        _, username = TelegramClient(token).get_identity()
+        logging.info("Telegram token accepted: bot=@%s", username)
         access = TelegramClient(token).check_channel_access(channel)
     except TelegramAPIError as exc:
         logging.error(
