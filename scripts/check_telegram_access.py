@@ -23,6 +23,19 @@ def main() -> int:
             exc.method,
             exc.status_code,
         )
+        if exc.method == "getChatMember" and exc.status_code == 400:
+            try:
+                channels = TelegramClient(token).discover_channels()
+            except Exception as discovery_exc:
+                logging.error("Автообнаружение канала не удалось (%s)", type(discovery_exc).__name__)
+            else:
+                for discovered in channels:
+                    logging.info(
+                        "DISCOVERED_CHANNEL chat_id=%s title=%s username=%s",
+                        discovered.chat_id,
+                        discovered.title,
+                        discovered.username or "(private)",
+                    )
         return 1
     except Exception as exc:
         logging.error(

@@ -57,3 +57,31 @@ def test_check_channel_access_rejects_member(monkeypatch) -> None:
 
     assert access.status == "member"
     assert access.can_post_messages is False
+
+
+def test_discover_channels_from_membership_updates(monkeypatch) -> None:
+    updates = [
+        {
+            "update_id": 1,
+            "my_chat_member": {
+                "chat": {
+                    "id": -1001234567890,
+                    "type": "channel",
+                    "title": "Test channel",
+                    "username": "test_channel",
+                }
+            },
+        },
+        {"update_id": 2, "message": {"text": "ignored"}},
+    ]
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        return FakeResponse(updates)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("aggregator.telegram.requests.get", fake_get)
+    channels = TelegramClient("secret").discover_channels()
+
+    assert len(channels) == 1
+    assert channels[0].chat_id == -1001234567890
+    assert channels[0].title == "Test channel"
+    assert channels[0].username == "test_channel"
