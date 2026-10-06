@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 
-from aggregator.telegram import TelegramClient
+from aggregator.telegram import TelegramAPIError, TelegramClient
 
 
 def main() -> int:
@@ -17,6 +17,13 @@ def main() -> int:
 
     try:
         access = TelegramClient(token).check_channel_access(channel)
+    except TelegramAPIError as exc:
+        logging.error(
+            "Проверка Telegram не удалась: method=%s http_status=%s",
+            exc.method,
+            exc.status_code,
+        )
+        return 1
     except Exception as exc:
         logging.error(
             "Проверка Telegram не удалась (%s). Проверьте TELEGRAM_BOT_TOKEN в GitHub Secrets",

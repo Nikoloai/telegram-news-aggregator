@@ -8,6 +8,7 @@ from aggregator.telegram import TelegramClient
 class FakeResponse:
     def __init__(self, result: dict[str, Any]):
         self._result = result
+        self.status_code = 200
 
     def raise_for_status(self) -> None:
         return None

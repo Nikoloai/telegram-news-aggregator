@@ -15,6 +15,13 @@ class TelegramAccess:
     can_post_messages: bool
 
 
+class TelegramAPIError(RuntimeError):
+    def __init__(self, method: str, status_code: int):
+        super().__init__(f"Telegram API {method} вернул HTTP {status_code}")
+        self.method = method
+        self.status_code = status_code
+
+
 class TelegramClient:
     def __init__(self, token: str, timeout: int = 20):
         if not token:
@@ -28,7 +35,10 @@ class TelegramClient:
             params=params,
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise TelegramAPIError(method, response.status_code) from exc
         payload = response.json()
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram API отклонил метод {method}")
