@@ -15,9 +15,19 @@ from dotenv import load_dotenv
 from aggregator.article import ArticleFetcher
 from aggregator.collector import FeedCollector
 from aggregator.corroboration import corroborating_sources, stories_match
-from aggregator.dedupe import Deduplicator, is_meaningful_update
+from aggregator.dedupe import Deduplicator, is_meaningful_update, normalize_title, normalize_url
+from aggregator.editorial import (
+    confirmation_level,
+    extract_title_quote,
+    is_correction,
+    is_emergency,
+    promise_result_publication,
+    related_publication,
+    rotate_items,
+    select_weekly_highlights,
+)
 from aggregator.filters import TopicFilter
-from aggregator.formatter import format_digest, format_post
+from aggregator.formatter import format_digest, format_post, format_weekly_digest
 from aggregator.models import FeedItem
 from aggregator.modes import RewriteMode, classify_mode
 from aggregator.storage import Storage
@@ -82,6 +92,13 @@ def digest_title(timezone_name: str, now_utc: datetime | None = None) -> str:
         zone = timezone(timedelta(hours=3), name="Europe/Moscow")
     local_hour = (now_utc or datetime.now(timezone.utc)).astimezone(zone).hour
     return "Утренний дайджест" if local_hour < 14 else "Вечерний дайджест"
+
+
+def telegram_post_url(channel: str, message_id: object) -> str | None:
+    username = channel.lstrip("@").strip()
+    if not username or not isinstance(message_id, int):
+        return None
+    return f"https://t.me/{username}/{message_id}"
 
 
 def load_sources(path: Path) -> list[dict[str, object]]:
@@ -160,14 +177,52 @@ def run(args: argparse.Namespace) -> RunStats:
                 post_timezone,
             )
 
+        if args.weekly_digest:
+            rows = storage.published_since(datetime.now(timezone.utc) - timedelta(days=7))
+            if not rows:
+                LOGGER.info("Для недельного дайджеста пока нет опубликованных материалов")
+                return stats
+            weekly_post = format_weekly_digest(select_weekly_highlights(rows), channel)
+            print("\n".join(["=" * 72, "WEEKLY DIGEST PREVIEW:", weekly_post]))
+            stats.previews = 1
+            status = "DRY_RUN" if args.dry_run else "REVIEW_READY"
+            message_id: int | None = None
+            destination = review_chat_id if review_mode else channel
+            should_send = not args.dry_run and telegram is not None and bool(destination)
+            if should_send:
+                try:
+                    message_id = telegram.send(destination, weekly_post)
+                    status = "SENT_TO_REVIEW" if review_mode else "PUBLISHED"
+                    stats.sent = 1
+                except Exception as exc:
+                    status = "SEND_FAILED"
+                    LOGGER.error("Telegram-отправка итогов недели не удалась: %s", type(exc).__name__)
+            iso_year, iso_week, _ = datetime.now(timezone.utc).date().isocalendar()
+            storage.save(
+                FeedItem(
+                    source="Редакция",
+                    title=f"Итоги недели {iso_year}-{iso_week:02d}",
+                    url=f"https://t.me/{channel.lstrip('@')}?weekly={iso_year}-{iso_week:02d}",
+                ),
+                status,
+                weekly_post,
+                RewriteMode.ANALYSIS.value,
+                ["weekly_digest"],
+                telegram_message_id=message_id,
+            )
+            return stats
+
         items = collector.collect_all(sources)
         items.sort(
             key=lambda item: item.published_at.timestamp() if item.published_at else 0,
             reverse=True,
         )
+        if not digest_mode and not args.emergency_only:
+            items = rotate_items(items, published_today)
         stats.collected = len(items)
         produced = 0
         emoji_cursor = published_today
+        recent_publications = storage.recent_published()
         for item in items:
             topic_match = topic_filter.match(item)
             if not topic_match.accepted:
@@ -175,14 +230,31 @@ def run(args: argparse.Namespace) -> RunStats:
                 stats.filtered += 1
                 continue
 
+            if args.emergency_only and not is_emergency(item, topic_match.topics):
+                storage.save(item, "NOT_EMERGENCY")
+                stats.filtered += 1
+                continue
+
             is_duplicate, reason = deduplicator.find_duplicate(item.url, item.title)
+            correction = is_correction(item.title, item.description)
             updated = bool(
                 is_duplicate
                 and reason
                 and not reason.startswith("exact:")
                 and is_meaningful_update(item.title, item.description)
             )
-            if is_duplicate and not updated:
+            exact_duplicate = bool(reason and reason.startswith("exact:"))
+            changed_correction = False
+            if exact_duplicate and correction:
+                previous_version = storage.find_by_normalized_url(normalize_url(item.url))
+                changed_correction = bool(
+                    previous_version
+                    and normalize_title(item.title) != str(previous_version["normalized_title"])
+                )
+            if is_duplicate and (
+                (exact_duplicate and not changed_correction)
+                or (not exact_duplicate and not updated and not correction)
+            ):
                 LOGGER.info("Дубль: %s (%s)", item.title, reason)
                 stats.duplicates += 1
                 continue
@@ -197,14 +269,32 @@ def run(args: argparse.Namespace) -> RunStats:
                 continue
 
             article = article_fetcher.fetch(item)
+            correction = correction or is_correction(item.title, article.text)
             if item.canonical_url and item.canonical_url != item.url:
                 is_duplicate, reason = deduplicator.find_duplicate(item.canonical_url, item.title)
-                if is_duplicate and not updated:
+                exact_duplicate = bool(reason and reason.startswith("exact:"))
+                changed_correction = False
+                if exact_duplicate and correction:
+                    previous_version = storage.find_by_normalized_url(normalize_url(item.canonical_url))
+                    changed_correction = bool(
+                        previous_version
+                        and normalize_title(item.title) != str(previous_version["normalized_title"])
+                    )
+                if is_duplicate and (
+                    (exact_duplicate and not changed_correction)
+                    or (not exact_duplicate and not updated and not correction)
+                ):
                     LOGGER.info("Дубль canonical URL: %s (%s)", item.title, reason)
                     stats.duplicates += 1
                     continue
 
             mode = classify_mode(item.title, article.text)
+            related = related_publication(item.title, recent_publications)
+            promise_result = None
+            if mode != RewriteMode.HARD_NEWS:
+                promise_result = promise_result_publication(item.title, article.text, recent_publications)
+            if correction and mode != RewriteMode.HARD_NEWS:
+                mode = RewriteMode.ANALYSIS
             try:
                 body = rewriter.rewrite(article, mode)
             except Exception as exc:  # provider failure must not stop the run
@@ -221,6 +311,12 @@ def run(args: argparse.Namespace) -> RunStats:
                 continue
 
             corroborated_by = corroborating_sources(item, items)
+            confidence = confirmation_level(validation_source, corroborated_by)
+            previous = promise_result or related
+            previous_url = telegram_post_url(channel, previous["telegram_message_id"]) if previous else None
+            quote = None
+            if mode != RewriteMode.HARD_NEWS and published_today % 4 == 2:
+                quote = extract_title_quote(item.title)
             post = format_post(
                 body,
                 item.source,
@@ -230,6 +326,12 @@ def run(args: argparse.Namespace) -> RunStats:
                 mode=mode,
                 corroborated_by=corroborated_by,
                 updated=updated,
+                confirmation=confidence.value,
+                previous_title=str(previous["title"]) if previous and previous_url else None,
+                previous_url=previous_url,
+                correction=correction,
+                promise_result=bool(promise_result),
+                quote=quote,
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
@@ -331,6 +433,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-items", type=int, default=int(os.getenv("MAX_ITEMS_PER_RUN", "5")))
     parser.add_argument("--dry-run", action="store_true", help="Never contact Telegram; print previews")
     parser.add_argument("--digest", action="store_true", help="Combine selected stories into one digest")
+    parser.add_argument("--emergency-only", action="store_true", help="Publish only fresh urgent stories")
+    parser.add_argument("--weekly-digest", action="store_true", help="Summarize the previous seven days")
     return parser.parse_args(argv)
 
 

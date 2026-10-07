@@ -5,3 +5,6 @@ def test_prompt_requires_self_contained_specific_details() -> None:
     assert "понятен без перехода по ссылке" in SYSTEM_PROMPT
     assert "полное название сервиса" in SYSTEM_PROMPT
     assert "кто что сделал, когда и что именно произошло" in SYSTEM_PROMPT
+    assert "что было указано неверно" in SYSTEM_PROMPT
+    assert "сохраняй дословно" in SYSTEM_PROMPT
+    assert "противопоставляй только факты" in SYSTEM_PROMPT

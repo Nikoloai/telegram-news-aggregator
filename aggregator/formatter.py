@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import re
+from collections import Counter
+from collections.abc import Mapping
 
 from .modes import RewriteMode
 
@@ -45,19 +47,39 @@ def format_post(
     mode: RewriteMode = RewriteMode.ANALYSIS,
     corroborated_by: list[str] | None = None,
     updated: bool = False,
+    confirmation: str | None = None,
+    previous_title: str | None = None,
+    previous_url: str | None = None,
+    correction: bool = False,
+    promise_result: bool = False,
+    quote: str | None = None,
 ) -> str:
     body = re.sub(r"[ \t]+", " ", body).strip()
     body = re.sub(r"^(?:⚡️?|🚨|❗️?|🔥|🔴|📌|💸|🧾|🤑|🤡|📺|🎪|⛓️|🪖|📉|🏛️|⚙️)\s*", "", body)
     prefix, rubric = _presentation(body, topics or [], mode, emoji_index)
+    if correction:
+        prefix, rubric = "🛠", "ИСПРАВЛЕНИЕ"
+    elif promise_result:
+        prefix, rubric = "📊", "Обещали / получилось"
+    elif quote:
+        prefix, rubric = "💬", "Цитата дня"
     source_label = f"Источник: {source}"
     notes: list[str] = []
     if updated:
-        notes.append("ОБНОВЛЕНО")
+        notes.append("<b>ОБНОВЛЕНО</b>")
+    if confirmation:
+        notes.append(f"<b>{html.escape(confirmation)}</b>")
     if corroborated_by:
-        notes.append("О том же сообщают: " + ", ".join(corroborated_by))
+        notes.append("О том же сообщают: " + html.escape(", ".join(corroborated_by)))
+    if previous_title and previous_url:
+        notes.append(
+            "Ранее: "
+            f'<a href="{html.escape(previous_url, quote=True)}">{html.escape(previous_title)}</a>'
+        )
     header = f"<b>{html.escape(rubric)}</b>\n" if rubric else ""
+    quote_block = f"<blockquote>{html.escape(quote)}</blockquote>\n" if quote else ""
     note_text = "\n".join(notes)
-    overhead = len(prefix) + 1 + len(source_label) + len(note_text) + len(rubric or "") + 6
+    overhead = len(prefix) + len(source_label) + len(note_text) + len(rubric or "") + len(quote or "") + 12
     available = max_chars - overhead
     if len(body) > available:
         clipped = body[: max(0, available - 1)].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
@@ -65,8 +87,8 @@ def format_post(
         clipped = body
     escaped_url = html.escape(url, quote=True)
     footer = f'<a href="{escaped_url}">{html.escape(source_label)}</a>'
-    note_block = f"\n\n{html.escape(note_text)}" if note_text else ""
-    return f"{prefix} {header}{html.escape(clipped)}{note_block}\n\n{footer}"
+    note_block = f"\n\n{note_text}" if note_text else ""
+    return f"{prefix} {header}{quote_block}{html.escape(clipped)}{note_block}\n\n{footer}"
 
 
 def format_digest(
@@ -88,4 +110,39 @@ def format_digest(
         if len("\n\n".join(parts + [entry])) > max_chars:
             break
         parts.append(entry)
+    return "\n\n".join(parts)
+
+
+def format_weekly_digest(
+    rows: list[Mapping[str, object]],
+    channel: str,
+    max_items: int = 5,
+) -> str:
+    parts = ["🧾 <b>Итоги недели</b>"]
+    topic_counts: Counter[str] = Counter()
+    username = channel.lstrip("@")
+    for index, row in enumerate(rows[:max_items], start=1):
+        title = str(row["title"])
+        message_id = row["telegram_message_id"]
+        source_url = str(row["canonical_url"] or row["url"])
+        url = f"https://t.me/{username}/{message_id}" if username and message_id else source_url
+        parts.append(
+            f'<b>{index}.</b> <a href="{html.escape(url, quote=True)}">{html.escape(title)}</a>'
+        )
+        topic_counts.update(filter(None, str(row["topics"] or "").split(",")))
+
+    if topic_counts:
+        dominant = topic_counts.most_common(1)[0][0]
+        conclusions = {
+            "war": "Главный фон недели — война и ее последствия, которые невозможно спрятать за языком официальных сводок.",
+            "repression": "Главный итог недели — государственное давление продолжает становиться повседневным механизмом управления.",
+            "corruption": "Главный итог недели — публичные деньги снова нашли дорогу, которую обществу показывать не спешат.",
+            "propaganda": "Главный итог недели — официальная картина мира все заметнее расходится с происходящим за ее рамкой.",
+            "sanctions_economy": "Главный итог недели — цену политических решений снова перекладывают на обычных людей.",
+        }
+        conclusion = conclusions.get(
+            dominant,
+            "Неделя снова показала: за официальными формулировками важнее всего видеть конкретные решения и их последствия.",
+        )
+        parts.append(f"<b>Сухой остаток:</b> {html.escape(conclusion)}")
     return "\n\n".join(parts)

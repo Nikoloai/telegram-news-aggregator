@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS articles (
     discovered_at TEXT NOT NULL,
     status TEXT NOT NULL,
     telegram_message_id INTEGER,
+    content TEXT,
     content_hash TEXT,
     rewrite_mode TEXT,
     topics TEXT,
@@ -39,16 +40,36 @@ class Storage:
         self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        columns = {str(row["name"]) for row in self.connection.execute("PRAGMA table_info(articles)")}
+        if "content" not in columns:
+            self.connection.execute("ALTER TABLE articles ADD COLUMN content TEXT")
+            self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()
 
     def find_exact(self, normalized_url: str, normalized_title: str) -> str | None:
         row = self.connection.execute(
-            "SELECT url FROM articles WHERE normalized_url = ? OR normalized_title = ? LIMIT 1",
+            """
+            SELECT url FROM articles
+            WHERE (normalized_url = ? OR normalized_title = ?)
+              AND status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+            LIMIT 1
+            """,
             (normalized_url, normalized_title),
         ).fetchone()
         return str(row["url"]) if row else None
+
+    def find_by_normalized_url(self, normalized_url: str) -> sqlite3.Row | None:
+        return self.connection.execute(
+            """
+            SELECT title, normalized_title, content, status, topics, updated_at
+            FROM articles
+            WHERE normalized_url = ?
+            LIMIT 1
+            """,
+            (normalized_url,),
+        ).fetchone()
 
     def recent_titles(self, limit: int = 500) -> list[sqlite3.Row]:
         return list(
@@ -75,6 +96,37 @@ class Storage:
         ).fetchone()
         return int(row["total"])
 
+    def recent_published(self, limit: int = 200) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT title, normalized_title, source, url, canonical_url, content,
+                       topics, telegram_message_id, updated_at
+                FROM articles
+                WHERE status = 'PUBLISHED'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        )
+
+    def published_since(self, start_utc: datetime, limit: int = 100) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT title, source, url, canonical_url, content, topics,
+                       telegram_message_id, updated_at
+                FROM articles
+                WHERE status = 'PUBLISHED' AND updated_at >= ?
+                  AND COALESCE(topics, '') NOT LIKE '%weekly_digest%'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (start_utc.isoformat(), limit),
+            )
+        )
+
     def save(
         self,
         item: FeedItem,
@@ -92,17 +144,46 @@ class Storage:
             """
             INSERT INTO articles (
                 url, canonical_url, normalized_url, title, normalized_title, source,
-                published_at, discovered_at, status, telegram_message_id, content_hash,
+                published_at, discovered_at, status, telegram_message_id, content, content_hash,
                 rewrite_mode, topics, error, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(normalized_url) DO UPDATE SET
-                status=excluded.status,
+                title=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.title ELSE excluded.title END,
+                normalized_title=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.normalized_title ELSE excluded.normalized_title END,
+                source=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.source ELSE excluded.source END,
+                published_at=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.published_at
+                    ELSE COALESCE(excluded.published_at, articles.published_at) END,
+                status=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.status
+                    ELSE excluded.status
+                END,
                 telegram_message_id=COALESCE(excluded.telegram_message_id, articles.telegram_message_id),
+                content=COALESCE(excluded.content, articles.content),
                 content_hash=COALESCE(excluded.content_hash, articles.content_hash),
                 rewrite_mode=COALESCE(excluded.rewrite_mode, articles.rewrite_mode),
-                topics=COALESCE(excluded.topics, articles.topics),
+                topics=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.topics ELSE COALESCE(excluded.topics, articles.topics) END,
                 error=excluded.error,
-                updated_at=excluded.updated_at
+                updated_at=CASE
+                    WHEN articles.status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                         AND excluded.status IN ('FILTERED_OUT', 'NOT_EMERGENCY')
+                    THEN articles.updated_at ELSE excluded.updated_at END
             """,
             (
                 item.url,
@@ -115,6 +196,7 @@ class Storage:
                 now,
                 status,
                 telegram_message_id,
+                content or None,
                 content_hash,
                 rewrite_mode,
                 ",".join(topics or []),

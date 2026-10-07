@@ -32,3 +32,60 @@ def test_recent_titles_ignores_filtered_items(tmp_path) -> None:
 
     assert [row["url"] for row in storage.recent_titles()] == ["https://example.org/yes"]
     storage.close()
+
+
+def test_exact_lookup_ignores_emergency_rejection(tmp_path) -> None:
+    storage = Storage(tmp_path / "state.db")
+    item = FeedItem(source="Test", title="Обычная новость", url="https://example.org/ordinary")
+    storage.save(item, "NOT_EMERGENCY")
+
+    assert storage.find_exact("https://example.org/ordinary", "обычная новость") is None
+    storage.close()
+
+
+def test_emergency_rejection_does_not_overwrite_published_status(tmp_path) -> None:
+    storage = Storage(tmp_path / "state.db")
+    item = FeedItem(source="Test", title="Опубликовано", url="https://example.org/already-published")
+    storage.save(item, "PUBLISHED", topics=["repression"])
+    before = storage.find_by_normalized_url("https://example.org/already-published")
+    rejected = FeedItem(source="Changed", title="Другой заголовок", url=item.url)
+    storage.save(rejected, "NOT_EMERGENCY")
+
+    row = storage.find_by_normalized_url("https://example.org/already-published")
+    assert row is not None and before is not None
+    assert row["status"] == "PUBLISHED"
+    assert row["title"] == "Опубликовано"
+    assert row["topics"] == "repression"
+    assert row["updated_at"] == before["updated_at"]
+    storage.close()
+
+
+def test_same_url_can_store_a_changed_correction_title(tmp_path) -> None:
+    storage = Storage(tmp_path / "state.db")
+    original = FeedItem(source="Test", title="Первоначальные данные", url="https://example.org/correction")
+    corrected = FeedItem(source="Test", title="Уточнение: исправлены данные", url=original.url)
+    storage.save(original, "PUBLISHED")
+    storage.save(corrected, "PUBLISHED")
+
+    row = storage.find_by_normalized_url("https://example.org/correction")
+    assert row is not None
+    assert row["normalized_title"] == "уточнение исправлены данные"
+    storage.close()
+
+
+def test_recent_published_keeps_content_and_message_id(tmp_path) -> None:
+    storage = Storage(tmp_path / "state.db")
+    item = FeedItem(source="Test", title="Опубликовано", url="https://example.org/published")
+    storage.save(
+        item,
+        "PUBLISHED",
+        content="Полный текст",
+        topics=["repression"],
+        telegram_message_id=77,
+    )
+
+    row = storage.recent_published()[0]
+    assert row["content"] == "Полный текст"
+    assert row["telegram_message_id"] == 77
+    assert storage.published_since(datetime.now(timezone.utc) - timedelta(minutes=1))[0]["title"] == "Опубликовано"
+    storage.close()

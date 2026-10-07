@@ -1,4 +1,4 @@
-from aggregator.formatter import EMOJI_PREFIXES, format_digest, format_post
+from aggregator.formatter import EMOJI_PREFIXES, format_digest, format_post, format_weekly_digest
 from aggregator.modes import RewriteMode
 
 
@@ -56,3 +56,57 @@ def test_format_digest_hides_raw_urls() -> None:
     assert "<b>Утренний дайджест</b>" in digest
     assert '<a href="https://example.org/one">Mediazona</a>' in digest
     assert "\nhttps://example.org" not in digest
+
+
+def test_format_post_adds_editorial_context_without_raw_link() -> None:
+    post = format_post(
+        "Система не заработала к обещанному сроку",
+        "Источник",
+        "https://example.org/current",
+        confirmation="🟢 Подтверждено несколькими источниками",
+        previous_title="Систему обещали запустить в сентябре",
+        previous_url="https://t.me/example/42",
+        promise_result=True,
+    )
+
+    assert post.startswith("📊 <b>Обещали / получилось</b>")
+    assert "Подтверждено несколькими источниками" in post
+    assert '<a href="https://t.me/example/42">Систему обещали запустить в сентябре</a>' in post
+    assert "\nhttps://t.me/example/42" not in post
+
+
+def test_format_post_correction_and_quote_rubrics() -> None:
+    correction = format_post(
+        "В первой версии было неверно указано имя",
+        "Источник",
+        "https://example.org",
+        correction=True,
+    )
+    quote = format_post(
+        "Чиновник объяснил решение",
+        "Источник",
+        "https://example.org",
+        quote="Система полностью готова к запуску",
+    )
+
+    assert correction.startswith("🛠 <b>ИСПРАВЛЕНИЕ</b>")
+    assert "<blockquote>Система полностью готова к запуску</blockquote>" in quote
+
+
+def test_format_weekly_digest_links_channel_posts_and_summarizes_theme() -> None:
+    digest = format_weekly_digest(
+        [
+            {
+                "title": "Суд арестовал журналиста",
+                "url": "https://example.org/story",
+                "canonical_url": None,
+                "topics": "repression",
+                "telegram_message_id": 123,
+            }
+        ],
+        "@example",
+    )
+
+    assert '<a href="https://t.me/example/123">Суд арестовал журналиста</a>' in digest
+    assert "Сухой остаток" in digest
+    assert "государственное давление" in digest
