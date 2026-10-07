@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 
+from .article import clean_html
 from .modes import RewriteMode
 
 
@@ -53,6 +54,9 @@ def format_post(
     correction: bool = False,
     promise_result: bool = False,
     quote: str | None = None,
+    context: str | None = None,
+    shared_origins: list[str] | None = None,
+    emergency: bool = False,
 ) -> str:
     body = re.sub(r"[ \t]+", " ", body).strip()
     body = re.sub(r"^(?:⚡️?|🚨|❗️?|🔥|🔴|📌|💸|🧾|🤑|🤡|📺|🎪|⛓️|🪖|📉|🏛️|⚙️)\s*", "", body)
@@ -63,6 +67,8 @@ def format_post(
         prefix, rubric = "📊", "Обещали / получилось"
     elif quote:
         prefix, rubric = "💬", "Цитата дня"
+    elif emergency:
+        prefix, rubric = "🚨", "СРОЧНО"
     source_label = f"Источник: {source}"
     notes: list[str] = []
     if updated:
@@ -71,6 +77,10 @@ def format_post(
         notes.append(f"<b>{html.escape(confirmation)}</b>")
     if corroborated_by:
         notes.append("О том же сообщают: " + html.escape(", ".join(corroborated_by)))
+    if shared_origins:
+        notes.append("Общий первоисточник: " + html.escape(", ".join(shared_origins)))
+    if context:
+        notes.append(html.escape(context))
     if previous_title and previous_url:
         notes.append(
             "Ранее: "
@@ -79,7 +89,7 @@ def format_post(
     header = f"<b>{html.escape(rubric)}</b>\n" if rubric else ""
     quote_block = f"<blockquote>{html.escape(quote)}</blockquote>\n" if quote else ""
     note_text = "\n".join(notes)
-    overhead = len(prefix) + len(source_label) + len(note_text) + len(rubric or "") + len(quote or "") + 12
+    overhead = len(prefix) + len(source_label) + len(clean_html(note_text)) + len(rubric or "") + len(quote or "") + 12
     available = max_chars - overhead
     if len(body) > available:
         clipped = body[: max(0, available - 1)].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
@@ -95,8 +105,16 @@ def format_digest(
     posts: list[tuple[str, str, str]],
     title: str,
     max_chars: int = 3900,
+    formatted_posts: list[str] | None = None,
 ) -> str:
     parts = [f"🗞 <b>{html.escape(title)}</b>"]
+    if formatted_posts is not None:
+        for index, post in enumerate(formatted_posts, start=1):
+            entry = f"<b>{index}.</b> {post}"
+            if len(clean_html("\n\n".join(parts + [entry]))) > max_chars:
+                raise ValueError("Подборка не помещается в Telegram; уменьшите число материалов")
+            parts.append(entry)
+        return "\n\n".join(parts)
     for index, (body, source, url) in enumerate(posts, start=1):
         paragraphs = [re.sub(r"\s+", " ", part).strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
         compact = paragraphs[0] if paragraphs else ""
@@ -122,7 +140,7 @@ def format_weekly_digest(
     topic_counts: Counter[str] = Counter()
     username = channel.lstrip("@")
     for index, row in enumerate(rows[:max_items], start=1):
-        title = str(row["title"])
+        title = str(row["title"])[:500]
         message_id = row["telegram_message_id"]
         source_url = str(row["canonical_url"] or row["url"])
         url = f"https://t.me/{username}/{message_id}" if username and message_id else source_url
@@ -133,16 +151,13 @@ def format_weekly_digest(
 
     if topic_counts:
         dominant = topic_counts.most_common(1)[0][0]
-        conclusions = {
-            "war": "Главный фон недели — война и ее последствия, которые невозможно спрятать за языком официальных сводок.",
-            "repression": "Главный итог недели — государственное давление продолжает становиться повседневным механизмом управления.",
-            "corruption": "Главный итог недели — публичные деньги снова нашли дорогу, которую обществу показывать не спешат.",
-            "propaganda": "Главный итог недели — официальная картина мира все заметнее расходится с происходящим за ее рамкой.",
-            "sanctions_economy": "Главный итог недели — цену политических решений снова перекладывают на обычных людей.",
+        theme_names = {
+            "war": "война и её последствия", "repression": "государственное давление и репрессии",
+            "corruption": "коррупция", "propaganda": "пропаганда",
+            "sanctions_economy": "экономика и санкции", "state_policy": "решения властей",
+            "military": "военная политика", "media_pressure": "давление на СМИ",
+            "human_rights": "права человека", "politics": "политика",
         }
-        conclusion = conclusions.get(
-            dominant,
-            "Неделя снова показала: за официальными формулировками важнее всего видеть конкретные решения и их последствия.",
-        )
+        conclusion = f"В этой подборке чаще всего встречается тема «{theme_names.get(dominant, dominant)}». Подробности и контекст — в постах выше."
         parts.append(f"<b>Сухой остаток:</b> {html.escape(conclusion)}")
     return "\n\n".join(parts)

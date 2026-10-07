@@ -36,7 +36,9 @@ def test_emergency_requires_fresh_high_risk_story() -> None:
     )
 
     assert is_emergency(fresh, ["war"], now)
-    assert not is_emergency(fresh, ["sanctions_economy"], now)
+    assert is_emergency(fresh, ["sanctions_economy"], now)  # Evacuation remains urgent regardless of feed tags.
+    ordinary = FeedItem("Test", "Срочно: опубликован отчет об инфляции", "https://example.org/economy", published_at=now)
+    assert not is_emergency(ordinary, ["sanctions_economy"], now)
     assert not is_emergency(stale, ["war"], now)
 
 
@@ -98,3 +100,35 @@ def test_weekly_highlights_prioritize_consequential_and_distinct_stories() -> No
     assert selected[0]["topics"] == "repression"
     assert len(selected) == 2
     assert sum("журналиста" in str(row["title"]) for row in selected) == 1
+
+
+def test_confirmation_does_not_upgrade_repeated_official_claim() -> None:
+    assert confirmation_level("Минобороны заявило о перехвате", ["Meduza", "Mediazona"]) == ConfirmationLevel.PARTY_CLAIM
+    assert confirmation_level("Опубликован отчет", ["Meduza"], ["ТАСС"]) == ConfirmationLevel.SHARED_ORIGIN
+
+
+def test_quote_is_not_a_product_or_award_name() -> None:
+    assert extract_title_quote("Кадыров получил знак «Почетный архитектор России»") is None
+
+
+def test_history_includes_exact_old_promise_and_publication_date() -> None:
+    from aggregator.editorial import publication_context
+    context = publication_context({
+        "title": "Минцифры пообещало запустить сервис Сфера до сентября",
+        "updated_at": "2026-08-01T10:00:00+00:00",
+    }, promise=True)
+    assert "01.08.2026" in context
+    assert "Минцифры пообещало запустить сервис Сфера до сентября" in context
+
+
+def test_important_fresh_news_outranks_routine_awards_and_old_news() -> None:
+    from aggregator.editorial import rank_news
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    items = [
+        FeedItem("Test", "Кадыров получил знак", "https://example.org/award", published_at=now),
+        FeedItem("Test", "В Москве погибли люди после взрыва", "https://example.org/urgent", published_at=now),
+        FeedItem("Test", "Суд арестовал журналиста", "https://example.org/stale", published_at=now-timedelta(days=3)),
+    ]
+    ranked = rank_news(items, [], slot=2, now_utc=now)
+    assert ranked[0].url.endswith("urgent")
+    assert len(ranked) == 2

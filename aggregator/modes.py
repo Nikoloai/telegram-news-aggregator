@@ -22,6 +22,7 @@ SATIRICAL_PATTERNS = (
     "абсурд", "курьез", "пропаганд", "импортозамещ", "аналогов нет", "духовн",
     "традиционн.*ценност", "торжествен.*откр", "праздничн", "запретил.*запрещ",
     "патриотическ.*воспитан", "иноагент.*маркиров", "скреп", "гойда",
+    "почетн.*архитектор", "чиновник.*наград", "кадыров.*(?:наград|знак)",
 )
 ANALYSIS_PATTERNS = (
     "закон", "указ", "санкц", "эконом", "бюджет", "налог", "госдум", "правительств",
@@ -34,14 +35,21 @@ def _has(text: str, patterns: tuple[str, ...]) -> bool:
 
 
 def classify_mode(title: str, text: str = "") -> RewriteMode:
-    value = f"{title} {text}".lower()
-    # Safety always overrides tone opportunities.
-    if _has(value, HARD_PATTERNS):
+    # The headline and lead define the event; background does not define the tone.
+    lead = re.split(r"\n\s*\n|\n", text.strip(), maxsplit=1)[0]
+    lead = " ".join(re.split(r"(?<=[.!?])\s+", lead)[:2])[:700]
+    focal = f"{title} {lead}".lower()
+    if _has(focal, HARD_PATTERNS):
         return RewriteMode.HARD_NEWS
-    if _has(value, SATIRICAL_PATTERNS):
+    # A fresh report of victims anywhere in the material still overrides satire.
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", text):
+        historical = re.search(r"\b(?:ранее|прежде|напомним|в прошлом|до этого|в \d{4} году)\b", sentence, re.I)
+        if not historical and _has(sentence, ("погиб", "ранен", "убит", "пытк", "пленн")):
+            return RewriteMode.HARD_NEWS
+    if _has(focal, SATIRICAL_PATTERNS):
         return RewriteMode.SATIRICAL
-    if _has(value, IRONIC_PATTERNS):
+    if _has(focal, IRONIC_PATTERNS):
         return RewriteMode.IRONIC
-    if _has(value, ANALYSIS_PATTERNS):
+    if _has(focal, ANALYSIS_PATTERNS):
         return RewriteMode.ANALYSIS
     return RewriteMode.ANALYSIS

@@ -110,3 +110,16 @@ def test_format_weekly_digest_links_channel_posts_and_summarizes_theme() -> None
     assert '<a href="https://t.me/example/123">Суд арестовал журналиста</a>' in digest
     assert "Сухой остаток" in digest
     assert "государственное давление" in digest
+
+
+def test_digest_keeps_quote_context_and_confirmation() -> None:
+    post = format_post(
+        "Сервис не заработал вовремя", "Test", "https://example.org",
+        quote="Мы запустим отечественный сервис вовремя",
+        context="Обещали: «Сервис запустят до сентября».",
+        confirmation="🟡 Пока один источник",
+    )
+    digest = format_digest([], "Вечерний дайджест", formatted_posts=[post])
+    assert "Цитата дня" in digest
+    assert "Обещали" in digest
+    assert "Пока один источник" in digest

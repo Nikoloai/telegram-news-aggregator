@@ -19,3 +19,13 @@ def test_corroborating_sources_are_unique_and_external() -> None:
     ]
 
     assert corroborating_sources(target, items) == ["Meduza"]
+
+
+def test_shared_attribution_and_conflicting_counts_are_detected() -> None:
+    from aggregator.corroboration import source_evidence
+    target = FeedItem("First", "В Москве после взрыва погибли 3 человека", "https://a.example/1", "По данным ТАСС, погибшие найдены на месте.")
+    other = FeedItem("Second", "В Москве после взрыва погибли 7 человек", "https://b.example/1", "По данным ТАСС, погибшие найдены на месте.")
+    evidence = source_evidence(target, [target, other])
+    assert evidence.sources == ["Second"]
+    assert evidence.shared_origins == ["ТАСС"]
+    assert evidence.conflicts

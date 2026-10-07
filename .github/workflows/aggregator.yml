@@ -8,11 +8,17 @@ on:
         required: true
         type: boolean
         default: true
+      run_mode:
+        description: "Choose a release or editor commands"
+        type: choice
+        default: auto
+        options: [auto, news, digest, quote, emergency, weekly, editor]
   schedule:
     - cron: "17 5,17 * * *"
     - cron: "17 7,9,11,13,15,19 * * *"
     - cron: "47 * * * *"
     - cron: "32 18 * * 0"
+    - cron: "32 11 * * *"
 
 permissions:
   contents: write
@@ -29,6 +35,10 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TNEWS_AGGREGATOR_BOT }}
       TELEGRAM_CHANNEL: ${{ vars.TELEGRAM_CHANNEL || '@GVOZDIchKAAA' }}
       REVIEW_CHAT_ID: ${{ secrets.REVIEW_CHAT_ID }}
+      EDITOR_CHAT_ID: ${{ secrets.EDITOR_CHAT_ID }}
+      REVIEW_UNCERTAIN: ${{ vars.REVIEW_UNCERTAIN || 'true' }}
+      NEWS_MAX_AGE_HOURS: ${{ vars.NEWS_MAX_AGE_HOURS || '48' }}
+      RUN_MODE: ${{ inputs.run_mode || 'auto' }}
       REVIEW_MODE: ${{ vars.REVIEW_MODE || 'true' }}
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
       LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4.1-mini' }}
@@ -54,7 +64,6 @@ jobs:
           fi
 
       - name: Restore durable state
-        if: env.DRY_RUN != 'true'
         shell: bash
         run: |
           mkdir -p data
@@ -81,16 +90,28 @@ jobs:
         shell: bash
         run: |
           if [[ "$DRY_RUN" == "true" ]]; then
-            python main.py --dry-run --state /tmp/dry-run.db
-          elif [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "32 18 * * 0" ]]; then
-            python main.py --weekly-digest
-          elif [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "47 * * * *" ]]; then
-            python main.py --emergency-only --max-items 1
-          elif [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "17 5,17 * * *" ]]; then
-            python main.py --digest --max-items 2
-          else
-            python main.py
+            if [[ -f data/state.db ]]; then cp data/state.db /tmp/dry-run.db; fi
           fi
+          args=()
+          if [[ "$DRY_RUN" == "true" ]]; then args+=(--dry-run --state /tmp/dry-run.db); fi
+          mode="$RUN_MODE"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            case "${{ github.event.schedule }}" in
+              "32 18 * * 0") mode=weekly ;;
+              "47 * * * *") mode=emergency ;;
+              "17 5,17 * * *") mode=digest ;;
+              "32 11 * * *") mode=quote ;;
+              *) mode=news ;;
+            esac
+          fi
+          case "$mode" in
+            weekly) args+=(--weekly-digest) ;;
+            emergency) args+=(--emergency-only --max-items 1) ;;
+            digest) args+=(--digest --max-items 2) ;;
+            quote) args+=(--quote-of-day --max-items 1) ;;
+            editor) args+=(--process-editor-messages) ;;
+          esac
+          python main.py "${args[@]}"
 
       - name: Persist state branch
         if: success() && env.DRY_RUN != 'true'

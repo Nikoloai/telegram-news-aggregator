@@ -92,6 +92,15 @@ class TelegramClient:
         bot = self._request("getMe")
         return int(bot["id"]), str(bot.get("username", ""))
 
+    def get_updates(self, offset: int = 0) -> list[dict[str, object]]:
+        result = self._request_result(
+            "getUpdates", offset=offset, limit=100, timeout=0,
+            allowed_updates=json.dumps(["message", "my_chat_member"]),
+        )
+        if not isinstance(result, list):
+            raise RuntimeError("Telegram API вернул неожиданный ответ для getUpdates")
+        return [update for update in result if isinstance(update, dict)]
+
     def check_channel_access(self, chat_id: str) -> TelegramAccess:
         bot_id, username = self.get_identity()
         member = self._request("getChatMember", chat_id=chat_id, user_id=bot_id)
@@ -105,14 +114,17 @@ class TelegramClient:
             can_post_messages=can_post,
         )
 
-    def send(self, chat_id: str, text: str) -> int:
+    def send(self, chat_id: str, text: str, preview_url: str | None = None) -> int:
+        preview_options: dict[str, object] = {"is_disabled": False}
+        if preview_url:
+            preview_options["url"] = preview_url
         response = requests.post(
             f"{self._base_url}/sendMessage",
             json={
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": "HTML",
-                "disable_web_page_preview": False,
+                "link_preview_options": preview_options,
             },
             timeout=self.timeout,
         )

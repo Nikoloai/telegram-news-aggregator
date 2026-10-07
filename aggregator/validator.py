@@ -64,7 +64,7 @@ class FactPreservationValidator:
             errors.append("Новые имена или организации: " + ", ".join(sorted(unsupported_entities)))
 
         key_entities = _entities(title)
-        missing_key = key_entities - generated_entities
+        missing_key = {entity for entity in key_entities if not _entity_supported(entity, generated)}
         if missing_key:
             warnings.append("В результате пропущены ключевые сущности: " + ", ".join(sorted(missing_key)))
         return ValidationResult(valid=not errors, errors=errors, warnings=warnings)

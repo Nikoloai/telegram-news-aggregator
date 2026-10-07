@@ -100,4 +100,16 @@ def test_send_uses_html_and_keeps_link_preview(monkeypatch) -> None:
     assert message_id == 321
     assert calls[0][0].endswith("/sendMessage")
     assert calls[0][1]["parse_mode"] == "HTML"
-    assert calls[0][1]["disable_web_page_preview"] is False
+    assert calls[0][1]["link_preview_options"] == {"is_disabled": False}
+
+
+def test_send_explicitly_previews_article_instead_of_earlier_post(monkeypatch) -> None:
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append(json)
+        return FakeResponse({"message_id": 1})
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    TelegramClient("test").send("@channel", '<a href="https://t.me/channel/1">Ранее</a>', preview_url="https://example.org/article")
+    assert calls[0]["link_preview_options"]["url"] == "https://example.org/article"

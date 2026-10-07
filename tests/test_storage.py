@@ -13,6 +13,41 @@ def test_storage_round_trip(tmp_path) -> None:
     storage.close()
 
 
+def test_publication_events_count_same_url_corrections_separately(tmp_path) -> None:
+    storage = Storage(tmp_path / "events.db")
+    item = FeedItem("Test", "Первый выпуск", "https://example.org/same")
+    storage.save(item, "PUBLISHED", telegram_message_id=1)
+    item.title = "Уточнение: исправлены данные"
+    storage.save(item, "PUBLISHED", telegram_message_id=2)
+    storage.save(item, "PUBLISHED", telegram_message_id=2)  # Repeated persistence is idempotent.
+    now = datetime.now(timezone.utc)
+    assert storage.count_published_between(now-timedelta(minutes=1), now+timedelta(minutes=1)) == 2
+    storage.close()
+
+
+def test_old_database_migration_preserves_history_and_daily_counts(tmp_path) -> None:
+    import sqlite3
+    from aggregator.storage import SCHEMA
+    path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA.replace("    content TEXT,\n", ""))
+    now = datetime.now(timezone.utc)
+    connection.execute(
+        """INSERT INTO articles (url, normalized_url, title, normalized_title, source,
+        discovered_at, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("https://example.org/legacy", "https://example.org/legacy", "Старый пост", "старый пост", "Test",
+         now.isoformat(), "PUBLISHED", now.isoformat()),
+    )
+    connection.commit()
+    connection.close()
+    for _ in range(2):
+        storage = Storage(path)
+        assert storage.recent_published()[0]["title"] == "Старый пост"
+        assert storage.recent_published()[0]["content"] is None
+        assert storage.count_published_between(now-timedelta(minutes=1), now+timedelta(minutes=1)) == 1
+        storage.close()
+
+
 def test_count_published_between(tmp_path) -> None:
     storage = Storage(tmp_path / "state.db")
     published = FeedItem(source="Test", title="Опубликовано", url="https://example.org/published")
