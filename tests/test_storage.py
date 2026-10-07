@@ -23,3 +23,12 @@ def test_count_published_between(tmp_path) -> None:
     now = datetime.now(timezone.utc)
     assert storage.count_published_between(now - timedelta(minutes=1), now + timedelta(minutes=1)) == 1
     storage.close()
+
+
+def test_recent_titles_ignores_filtered_items(tmp_path) -> None:
+    storage = Storage(tmp_path / "state.db")
+    storage.save(FeedItem(source="Test", title="Не публиковалось", url="https://example.org/no"), "FILTERED_OUT")
+    storage.save(FeedItem(source="Test", title="Опубликовано", url="https://example.org/yes"), "PUBLISHED")
+
+    assert [row["url"] for row in storage.recent_titles()] == ["https://example.org/yes"]
+    storage.close()

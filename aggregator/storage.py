@@ -53,7 +53,14 @@ class Storage:
     def recent_titles(self, limit: int = 500) -> list[sqlite3.Row]:
         return list(
             self.connection.execute(
-                "SELECT url, normalized_title FROM articles ORDER BY discovered_at DESC LIMIT ?", (limit,)
+                """
+                SELECT url, normalized_title
+                FROM articles
+                WHERE status IN ('PUBLISHED', 'SENT_TO_REVIEW', 'REVIEW_READY', 'DRY_RUN')
+                ORDER BY discovered_at DESC
+                LIMIT ?
+                """,
+                (limit,),
             )
         )
 

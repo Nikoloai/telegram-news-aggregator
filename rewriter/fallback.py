@@ -16,6 +16,8 @@ class FallbackRewriter(Rewriter):
         raw = re.sub(r"(?:Читайте также|Подробнее)\s*:?.*$", "", raw, flags=re.I)
         sentences = re.split(r"(?<=[.!?])\s+", raw)
         summary = " ".join(sentence for sentence in sentences[:3] if sentence).strip()
+        if summary.lower().startswith(title.lower()):
+            summary = summary[len(title) :].lstrip(" .—–-:;")
         if len(summary) > 850:
             summary = summary[:847].rsplit(" ", 1)[0] + "…"
         parts = [title, summary] if summary and summary.lower() != title.lower() else [title]

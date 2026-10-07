@@ -8,6 +8,7 @@ class RewriteMode(StrEnum):
     HARD_NEWS = "HARD_NEWS"
     ANALYSIS = "ANALYSIS"
     IRONIC = "IRONIC"
+    SATIRICAL = "SATIRICAL"
 
 
 HARD_PATTERNS = (
@@ -15,8 +16,12 @@ HARD_PATTERNS = (
     "арест", "задерж", "уголовн.*дел", "сизо", "колони", "пытк", "насили", "политзаключ",
 )
 IRONIC_PATTERNS = (
-    "запретил.*запрещ", "цензур", "пропаганд", "противореч", "абсурд", "курьез",
-    "чиновник.*заявил", "роскомнадзор", "блокиров.*за",
+    "цензур", "противореч", "чиновник.*заявил", "роскомнадзор", "блокиров.*за",
+)
+SATIRICAL_PATTERNS = (
+    "абсурд", "курьез", "пропаганд", "импортозамещ", "аналогов нет", "духовн",
+    "традиционн.*ценност", "торжествен.*откр", "праздничн", "запретил.*запрещ",
+    "патриотическ.*воспитан", "иноагент.*маркиров", "скреп", "гойда",
 )
 ANALYSIS_PATTERNS = (
     "закон", "указ", "санкц", "эконом", "бюджет", "налог", "госдум", "правительств",
@@ -33,6 +38,8 @@ def classify_mode(title: str, text: str = "") -> RewriteMode:
     # Safety always overrides tone opportunities.
     if _has(value, HARD_PATTERNS):
         return RewriteMode.HARD_NEWS
+    if _has(value, SATIRICAL_PATTERNS):
+        return RewriteMode.SATIRICAL
     if _has(value, IRONIC_PATTERNS):
         return RewriteMode.IRONIC
     if _has(value, ANALYSIS_PATTERNS):

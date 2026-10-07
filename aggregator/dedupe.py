@@ -62,6 +62,16 @@ GENERIC_WORDS = {
     "против", "заявил", "сообщил", "человек", "власти",
 }
 
+UPDATE_PATTERNS = (
+    "обнов", "новые данные", "стало известно", "число .*вырос", "число .*увелич",
+    "уточнил", "уточнили", "подтвердил", "подтвердили", "дополнил", "дополнили",
+)
+
+
+def is_meaningful_update(title: str, description: str = "") -> bool:
+    value = f"{title} {description}".lower()
+    return any(re.search(pattern, value, flags=re.IGNORECASE) for pattern in UPDATE_PATTERNS)
+
 
 def _same_named_event(left: str, right: str) -> bool:
     left_groups = {i for i, group in enumerate(EVENT_GROUPS) if any(word in left for word in group)}

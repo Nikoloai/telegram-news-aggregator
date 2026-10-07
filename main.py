@@ -14,10 +14,12 @@ from dotenv import load_dotenv
 
 from aggregator.article import ArticleFetcher
 from aggregator.collector import FeedCollector
-from aggregator.dedupe import Deduplicator
+from aggregator.corroboration import corroborating_sources, stories_match
+from aggregator.dedupe import Deduplicator, is_meaningful_update
 from aggregator.filters import TopicFilter
-from aggregator.formatter import format_post
-from aggregator.modes import classify_mode
+from aggregator.formatter import format_digest, format_post
+from aggregator.models import FeedItem
+from aggregator.modes import RewriteMode, classify_mode
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
@@ -58,6 +60,28 @@ class RunStats:
     validation_failed: int = 0
     previews: int = 0
     sent: int = 0
+
+
+@dataclass(slots=True)
+class PreparedPost:
+    item: FeedItem
+    article_text: str
+    body: str
+    mode: RewriteMode
+    topics: list[str]
+    post: str
+    updated: bool = False
+
+
+def digest_title(timezone_name: str, now_utc: datetime | None = None) -> str:
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        if timezone_name != "Europe/Moscow":
+            raise
+        zone = timezone(timedelta(hours=3), name="Europe/Moscow")
+    local_hour = (now_utc or datetime.now(timezone.utc)).astimezone(zone).hour
+    return "Утренний дайджест" if local_hour < 14 else "Вечерний дайджест"
 
 
 def load_sources(path: Path) -> list[dict[str, object]]:
@@ -109,8 +133,10 @@ def run(args: argparse.Namespace) -> RunStats:
     telegram = TelegramClient(token) if token else None
     daily_limit = max(0, int(os.getenv("DAILY_POST_LIMIT", "10")))
     post_timezone = os.getenv("POST_TIMEZONE", "Europe/Moscow").strip()
+    digest_mode = args.digest or env_bool("DIGEST_MODE", False)
     published_today = 0
     effective_max_items = args.max_items
+    prepared_posts: list[PreparedPost] = []
 
     try:
         if not args.dry_run and not review_mode and daily_limit:
@@ -150,15 +176,30 @@ def run(args: argparse.Namespace) -> RunStats:
                 continue
 
             is_duplicate, reason = deduplicator.find_duplicate(item.url, item.title)
-            if is_duplicate:
+            updated = bool(
+                is_duplicate
+                and reason
+                and not reason.startswith("exact:")
+                and is_meaningful_update(item.title, item.description)
+            )
+            if is_duplicate and not updated:
                 LOGGER.info("Дубль: %s (%s)", item.title, reason)
                 stats.duplicates += 1
+                continue
+
+            if not updated and any(stories_match(item.title, prepared.item.title) for prepared in prepared_posts):
+                LOGGER.info("Дубль внутри текущей подборки: %s", item.title)
+                stats.duplicates += 1
+                continue
+
+            if digest_mode and any(item.source == prepared.item.source for prepared in prepared_posts):
+                LOGGER.info("Для разнообразия дайджеста пропущен второй материал %s", item.source)
                 continue
 
             article = article_fetcher.fetch(item)
             if item.canonical_url and item.canonical_url != item.url:
                 is_duplicate, reason = deduplicator.find_duplicate(item.canonical_url, item.title)
-                if is_duplicate:
+                if is_duplicate and not updated:
                     LOGGER.info("Дубль canonical URL: %s (%s)", item.title, reason)
                     stats.duplicates += 1
                     continue
@@ -179,16 +220,37 @@ def run(args: argparse.Namespace) -> RunStats:
                 stats.validation_failed += 1
                 continue
 
+            corroborated_by = corroborating_sources(item, items)
             post = format_post(
                 body,
                 item.source,
                 item.canonical_url or item.url,
                 emoji_index=emoji_cursor,
+                topics=topic_match.topics,
+                mode=mode,
+                corroborated_by=corroborated_by,
+                updated=updated,
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
             stats.previews += 1
             produced += 1
+
+            if digest_mode:
+                prepared_posts.append(
+                    PreparedPost(
+                        item=item,
+                        article_text=article.text,
+                        body=body,
+                        mode=mode,
+                        topics=topic_match.topics,
+                        post=post,
+                        updated=updated,
+                    )
+                )
+                if produced >= effective_max_items:
+                    break
+                continue
 
             status = "DRY_RUN" if args.dry_run else "REVIEW_READY"
             message_id: int | None = None
@@ -221,6 +283,42 @@ def run(args: argparse.Namespace) -> RunStats:
             )
             if produced >= effective_max_items:
                 break
+
+        if digest_mode and prepared_posts:
+            digest_entries = [
+                (
+                    ("ОБНОВЛЕНО — " if prepared.updated else "") + prepared.body,
+                    prepared.item.source,
+                    prepared.item.canonical_url or prepared.item.url,
+                )
+                for prepared in prepared_posts
+            ]
+            digest = format_digest(digest_entries, digest_title(post_timezone))
+            print("\n".join(["=" * 72, "DIGEST PREVIEW:", digest]))
+            status = "DRY_RUN" if args.dry_run else "REVIEW_READY"
+            message_id: int | None = None
+            destination = review_chat_id if review_mode else channel
+            should_send = not args.dry_run and telegram is not None and bool(destination)
+            if should_send:
+                try:
+                    message_id = telegram.send(destination, digest)
+                    status = "SENT_TO_REVIEW" if review_mode else "PUBLISHED"
+                    stats.sent += 1
+                except Exception as exc:
+                    status = "SEND_FAILED"
+                    LOGGER.error("Telegram-отправка дайджеста не удалась: %s", type(exc).__name__)
+            elif not args.dry_run:
+                status = "REVIEW_READY" if review_mode else "CONFIGURATION_ERROR"
+
+            for prepared in prepared_posts:
+                storage.save(
+                    prepared.item,
+                    status,
+                    prepared.article_text,
+                    prepared.mode.value,
+                    prepared.topics,
+                    telegram_message_id=message_id,
+                )
     finally:
         storage.close()
     return stats
@@ -232,6 +330,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--state", type=Path, default=Path(os.getenv("STATE_DB", "data/state.db")))
     parser.add_argument("--max-items", type=int, default=int(os.getenv("MAX_ITEMS_PER_RUN", "5")))
     parser.add_argument("--dry-run", action="store_true", help="Never contact Telegram; print previews")
+    parser.add_argument("--digest", action="store_true", help="Combine selected stories into one digest")
     return parser.parse_args(argv)
 
 

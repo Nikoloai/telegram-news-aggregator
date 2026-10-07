@@ -1,4 +1,4 @@
-from aggregator.dedupe import Deduplicator, normalize_title, normalize_url
+from aggregator.dedupe import Deduplicator, is_meaningful_update, normalize_title, normalize_url
 
 
 class FakeStorage:
@@ -65,3 +65,8 @@ def test_unrelated_criminal_cases_are_not_duplicates() -> None:
         "https://example.org/two", "на журналиста завели уголовное дело об оправдании терроризма"
     )
     assert duplicate is False
+
+
+def test_meaningful_update_detection() -> None:
+    assert is_meaningful_update("Стало известно о новых данных по делу") is True
+    assert is_meaningful_update("Суд рассмотрел уголовное дело") is False
