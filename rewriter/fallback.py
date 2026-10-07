@@ -18,7 +18,5 @@ class FallbackRewriter(Rewriter):
         summary = " ".join(sentence for sentence in sentences[:3] if sentence).strip()
         if len(summary) > 850:
             summary = summary[:847].rsplit(" ", 1)[0] + "…"
-        significant = bool(re.search(r"\b(?:срочно|принял|ввел|объявил|запрет|санкц|отставк)", title, re.I))
-        lead = f"⚡ {title}" if mode != RewriteMode.HARD_NEWS and significant else title
-        parts = [lead, summary] if summary and summary.lower() != title.lower() else [lead]
+        parts = [title, summary] if summary and summary.lower() != title.lower() else [title]
         return "\n\n".join(parts)

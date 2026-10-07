@@ -31,13 +31,11 @@ EXCLUDED_KEYWORDS = (
     "знаменитост", "премьера фильма", "музыкальный альбом",
 )
 
-FOREIGN_MARKERS = (
-    "кндр", "северн.*коре", "инди", "китай", "франци", "германи", "сша", "америк",
-    "израил", "газе", "палестин", "мексик", "африк", "британи",
-)
-CORE_CONTEXT = (
-    "росси", "украин", "беларус", "кремл", "путин", "российск", "украинск",
-    "москва", "санкт-петербург", "госдум", "роскомнадзор", "фсб", "мвд",
+RUSSIA_CONTEXT = (
+    "росси", "российск", "кремл", "путин", "рф", "москва", "санкт-петербург",
+    "госдум", "совет федерации", "роскомнадзор", "росгвард", "фсб", "мвд",
+    "минобороны рф", "минфин росс", "следственн.*комитет", "рубл", "чечн", "дагестан",
+    "татарстан", "белгород", "брянск", "курск", "сочи", "калининград",
 )
 
 
@@ -54,12 +52,12 @@ class TopicFilter:
         ).lower()
         topics = [name for name, words in TOPIC_KEYWORDS.items() if _matches(haystack, words)]
         excluded = [word for word in EXCLUDED_KEYWORDS if word in haystack]
-        unrelated_foreign = _matches(item.title, FOREIGN_MARKERS) and not _matches(item.title, CORE_CONTEXT)
+        russia_related = _matches(haystack, RUSSIA_CONTEXT)
         # A relevant political/public-interest signal wins over a generic excluded word.
-        if unrelated_foreign:
-            excluded.append("unrelated_foreign")
+        if not russia_related:
+            excluded.append("not_russia_related")
         return TopicMatch(
-            accepted=bool(topics) and not unrelated_foreign and not (excluded and not topics),
+            accepted=bool(topics) and russia_related and not (excluded and not topics),
             topics=topics,
             excluded_by=excluded,
         )

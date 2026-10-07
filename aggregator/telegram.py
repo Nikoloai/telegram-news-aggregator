@@ -108,7 +108,12 @@ class TelegramClient:
     def send(self, chat_id: str, text: str) -> int:
         response = requests.post(
             f"{self._base_url}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "disable_web_page_preview": False},
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False,
+            },
             timeout=self.timeout,
         )
         response.raise_for_status()

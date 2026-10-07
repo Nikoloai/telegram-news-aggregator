@@ -85,3 +85,19 @@ def test_discover_channels_from_membership_updates(monkeypatch) -> None:
     assert channels[0].chat_id == -1001234567890
     assert channels[0].title == "Test channel"
     assert channels[0].username == "test_channel"
+
+
+def test_send_uses_html_and_keeps_link_preview(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object], int]] = []
+
+    def fake_post(url: str, json: dict[str, object], timeout: int) -> FakeResponse:
+        calls.append((url, json, timeout))
+        return FakeResponse({"message_id": 321})
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    message_id = TelegramClient("secret").send("@channel", '<a href="https://example.org">Источник</a>')
+
+    assert message_id == 321
+    assert calls[0][0].endswith("/sendMessage")
+    assert calls[0][1]["parse_mode"] == "HTML"
+    assert calls[0][1]["disable_web_page_preview"] is False

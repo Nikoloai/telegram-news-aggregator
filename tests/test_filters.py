@@ -4,7 +4,7 @@ from aggregator.models import FeedItem
 
 def test_topic_filter_accepts_repression() -> None:
     result = TopicFilter().match(
-        FeedItem(source="x", title="Журналиста арестовали по уголовному делу", url="https://example.org/1")
+        FeedItem(source="x", title="Российского журналиста арестовали по уголовному делу", url="https://example.org/1")
     )
     assert result.accepted is True
     assert "repression" in result.topics
@@ -26,7 +26,7 @@ def test_topic_filter_rejects_unrelated_foreign_news() -> None:
         )
     )
     assert result.accepted is False
-    assert "unrelated_foreign" in result.excluded_by
+    assert "not_russia_related" in result.excluded_by
 
 
 def test_topic_filter_keeps_foreign_news_tied_to_russia() -> None:
@@ -35,6 +35,30 @@ def test_topic_filter_keeps_foreign_news_tied_to_russia() -> None:
             source="x",
             title="Латвия ввела санкции против российского чиновника",
             url="https://example.org/4",
+        )
+    )
+    assert result.accepted is True
+
+
+def test_topic_filter_rejects_ukraine_only_news() -> None:
+    result = TopicFilter().match(
+        FeedItem(
+            source="x",
+            title="Украина сообщила об атаке дронов на порт",
+            url="https://example.org/5",
+        )
+    )
+    assert result.accepted is False
+    assert "not_russia_related" in result.excluded_by
+
+
+def test_topic_filter_accepts_russia_context_in_description() -> None:
+    result = TopicFilter().match(
+        FeedItem(
+            source="x",
+            title="Суд вынес приговор журналисту",
+            description="Дело рассматривал российский суд в Москве.",
+            url="https://example.org/6",
         )
     )
     assert result.accepted is True

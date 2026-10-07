@@ -141,6 +141,7 @@ def run(args: argparse.Namespace) -> RunStats:
         )
         stats.collected = len(items)
         produced = 0
+        emoji_cursor = published_today
         for item in items:
             topic_match = topic_filter.match(item)
             if not topic_match.accepted:
@@ -178,7 +179,13 @@ def run(args: argparse.Namespace) -> RunStats:
                 stats.validation_failed += 1
                 continue
 
-            post = format_post(body, item.source, item.canonical_url or item.url)
+            post = format_post(
+                body,
+                item.source,
+                item.canonical_url or item.url,
+                emoji_index=emoji_cursor,
+            )
+            emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
             stats.previews += 1
             produced += 1
