@@ -34,6 +34,7 @@ from aggregator.formatter import format_digest, format_post, format_weekly_diges
 from aggregator.models import FeedItem
 from aggregator.modes import RewriteMode, classify_mode
 from aggregator.review import notify_pending, process_editor_messages
+from aggregator.schedule import due_posts, weekly_due
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
@@ -78,6 +79,7 @@ class RunStats:
     validation_failed: int = 0
     previews: int = 0
     sent: int = 0
+    shortfall: int = 0
 
 
 @dataclass(slots=True)
@@ -137,6 +139,7 @@ def emit_preview(item_source: str, title: str, mode: str, topics: list[str], dup
 
 
 def run(args: argparse.Namespace) -> RunStats:
+    args = argparse.Namespace(**vars(args))
     sources = load_sources(args.config)
     storage = Storage(args.state)
     collector = FeedCollector()
@@ -158,6 +161,8 @@ def run(args: argparse.Namespace) -> RunStats:
     digest_mode = args.digest or env_bool("DIGEST_MODE", False)
     published_today = 0
     effective_max_items = args.max_items
+    expected_posts = 0
+    published_before_release = 0
     prepared_posts: list[PreparedPost] = []
 
     try:
@@ -181,6 +186,26 @@ def run(args: argparse.Namespace) -> RunStats:
             quote_used = storage.rubric_count_between("quote", day_start, day_end) > 0
         if args.process_editor_messages:
             return stats
+        if args.scheduled_release:
+            # A delayed invocation catches up to the cumulative plan, not just one post.
+            published_today = storage.count_published_between(day_start, day_end)
+            published_before_release = published_today
+            has_weekly = bool(storage.find_exact(normalize_url(weekly_item.url), normalize_title(weekly_item.title)))
+            if weekly_due(local_now) and not has_weekly:
+                args.weekly_digest = True
+            else:
+                target = due_posts(local_now, daily_limit)
+                if local_now.weekday() == 6 and not has_weekly:
+                    target = min(target, max(0, daily_limit - 1))
+                expected_posts = max(0, target - published_today)
+                effective_max_items = expected_posts
+                digest_mode = False
+                if not expected_posts:
+                    args.emergency_only = True
+                    effective_max_items = 1
+                LOGGER.info("Суточный план: published=%d due=%d needed=%d limit=%d timezone=%s",
+                            published_today, target if not args.weekly_digest else daily_limit,
+                            expected_posts, daily_limit, post_timezone)
         if args.quote_of_day and quote_used:
             LOGGER.info("Цитата дня уже опубликована")
             return stats
@@ -255,6 +280,7 @@ def run(args: argparse.Namespace) -> RunStats:
         recent_publications = storage.recent_published()
         items = rank_news(items, recent_publications, published_today,
                           max_age_hours=max(3, int(os.getenv("NEWS_MAX_AGE_HOURS", "48"))))
+        candidates_checked = 0
         for item in items:
             if args.quote_of_day and not extract_title_quote(item.title):
                 continue
@@ -309,6 +335,10 @@ def run(args: argparse.Namespace) -> RunStats:
                 LOGGER.info("Для разнообразия дайджеста пропущен второй материал %s", item.source)
                 continue
 
+            candidates_checked += 1
+            if candidates_checked > max(1, args.max_candidates):
+                LOGGER.warning("Достигнут лимит проверки кандидатов: %d", args.max_candidates)
+                break
             article = article_fetcher.fetch(item)
             correction = correction or is_correction(item.title, article.text)
             if item.canonical_url and item.canonical_url != item.url:
@@ -399,7 +429,7 @@ def run(args: argparse.Namespace) -> RunStats:
             reasons.extend(rewrite_warnings)
             if reasons and env_bool("REVIEW_UNCERTAIN", True):
                 LOGGER.info("Материал удержан для редактора: %s", "; ".join(reasons))
-                if not args.dry_run:
+                if not args.dry_run and held_for_review < 3:
                     storage.enqueue_review(item, post, validation_source, mode.value, topic_match.topics,
                                            reasons, rubric=rubric, body_text=body)
                     storage.save(item, "REVIEW_PENDING", article.text, mode.value, topic_match.topics,
@@ -409,8 +439,7 @@ def run(args: argparse.Namespace) -> RunStats:
                     if telegram:
                         notify_pending(storage, telegram, editor_chat_id)
                 held_for_review += 1
-                if held_for_review >= 3:
-                    break
+                # Three disputed stories must not block all later safe stories.
                 continue
             if quote:
                 quote_used = True
@@ -446,6 +475,7 @@ def run(args: argparse.Namespace) -> RunStats:
                         published_today += 1
                 except Exception as exc:
                     status = "SEND_FAILED"
+                    produced -= 1
                     LOGGER.error("Telegram-отправка не удалась: %s", type(exc).__name__)
             elif not args.dry_run:
                 if review_mode:
@@ -511,6 +541,23 @@ def run(args: argparse.Namespace) -> RunStats:
                 if prepared.rubric == "correction" and status in {"PUBLISHED", "SENT_TO_REVIEW", "REVIEW_READY", "DRY_RUN"}:
                     signature = hashlib.sha256(f"{prepared.item.title}\n{clean_html(prepared.item.description)}".encode()).hexdigest()
                     storage.set_meta(f"correction_seen:{normalize_url(prepared.item.canonical_url or prepared.item.url)}", signature)
+        if expected_posts:
+            achieved = produced if args.dry_run else max(
+                0, storage.count_published_between(day_start, day_end) - published_before_release
+            )
+            stats.shortfall = max(0, expected_posts - achieved)
+            if stats.shortfall:
+                LOGGER.warning("Недобор суточного плана: не хватает %d постов; пригодные новости исчерпаны или отправка не удалась",
+                               stats.shortfall)
+                if not args.dry_run and telegram and editor_chat_id.isdecimal() and int(editor_chat_id) > 0:
+                    key = "shortfall_notice:" + day_start.isoformat()
+                    if storage.get_meta(key) != str(stats.shortfall):
+                        try:
+                            telegram.send(editor_chat_id, f"⚠️ Недобор плана: не хватает {stats.shortfall} постов к текущему времени. "
+                                          "Спорные материалы и дубли не опубликованы ради количества.")
+                            storage.set_meta(key, str(stats.shortfall))
+                        except Exception as exc:
+                            LOGGER.warning("Не удалось сообщить о недоборе: %s", type(exc).__name__)
     finally:
         storage.close()
     return stats
@@ -527,6 +574,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--weekly-digest", action="store_true", help="Summarize the previous seven days")
     parser.add_argument("--quote-of-day", action="store_true", help="Select an attributed quote, at most once a day")
     parser.add_argument("--process-editor-messages", action="store_true", help="Handle private editor commands only")
+    parser.add_argument("--scheduled-release", action="store_true", help="Catch up to the ten-post daily plan")
+    parser.add_argument("--max-candidates", type=int, default=40, help="Limit article extraction and rewriting per run")
     return parser.parse_args(argv)
 
 
@@ -540,13 +589,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     stats = run(args)
     LOGGER.info(
-        "Итог: collected=%d filtered=%d duplicates=%d validation_failed=%d previews=%d sent=%d",
+        "Итог: collected=%d filtered=%d duplicates=%d validation_failed=%d previews=%d sent=%d shortfall=%d",
         stats.collected,
         stats.filtered,
         stats.duplicates,
         stats.validation_failed,
         stats.previews,
         stats.sent,
+        stats.shortfall,
     )
     return 0
 

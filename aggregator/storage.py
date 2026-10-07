@@ -111,7 +111,8 @@ class Storage:
     def count_published_between(self, start_utc: datetime, end_utc: datetime) -> int:
         row = self.connection.execute(
             """
-            SELECT COUNT(*) AS total
+            SELECT COUNT(DISTINCT CASE WHEN telegram_message_id IS NOT NULL
+                THEN 'telegram:' || telegram_message_id ELSE event_key END) AS total
             FROM publications
             WHERE published_at >= ? AND published_at < ?
             """,
