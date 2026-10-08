@@ -18,6 +18,7 @@ TOPIC_EMOJIS: dict[str, tuple[str, ...]] = {
     "propaganda": ("🤡", "📺", "🎪"),
     "sanctions_economy": ("💸", "📉", "🧾"),
     "state_policy": ("🏛️", "📌", "⚙️"),
+    "public_safety": ("⚠️", "🚨", "📌"),
 }
 
 
@@ -156,6 +157,7 @@ def format_weekly_digest(
             "corruption": "коррупция", "propaganda": "пропаганда",
             "sanctions_economy": "экономика и санкции", "state_policy": "решения властей",
             "military": "военная политика", "media_pressure": "давление на СМИ",
+            "public_safety": "безопасность людей и инфраструктура",
             "human_rights": "права человека", "politics": "политика",
         }
         conclusion = f"В этой подборке чаще всего встречается тема «{theme_names.get(dominant, dominant)}». Подробности и контекст — в постах выше."
