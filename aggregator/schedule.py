@@ -1,16 +1,31 @@
 from __future__ import annotations
 
-from datetime import datetime
+import hashlib
+from datetime import date, datetime
 
 
-# Ten separate messages, spread across the Moscow editorial day.
-PUBLICATION_SLOTS = ((8, 17), (9, 47), (11, 17), (12, 47), (14, 17),
-                     (15, 47), (17, 17), (18, 47), (20, 17), (22, 17))
+# Nominal 72-minute spacing; each day's actual times vary by up to 13 minutes.
+PUBLICATION_SLOTS = tuple(divmod(8 * 60 + 15 + index * 72, 60) for index in range(10))
+
+
+def publication_slots(day: date) -> tuple[tuple[int, int], ...]:
+    """Ten reproducible, uneven times inside the Moscow daytime window.
+
+    A stable date-based seed prevents reruns from moving the goalposts.
+    Neither process randomness nor wall-clock polling changes today's plan.
+    """
+    slots = []
+    for index, (hour, minute) in enumerate(PUBLICATION_SLOTS):
+        digest = hashlib.sha256(f"moscow-editorial-v1:{day.isoformat()}:{index}".encode()).digest()
+        jitter = int.from_bytes(digest[:2], "big") % 27 - 13
+        slots.append(divmod(hour * 60 + minute + jitter, 60))
+    return tuple(slots)
 
 
 def due_posts(local_now: datetime, target: int = 10) -> int:
-    elapsed = sum((local_now.hour, local_now.minute) >= slot for slot in PUBLICATION_SLOTS)
-    return elapsed * max(0, target) // len(PUBLICATION_SLOTS)
+    slots = publication_slots(local_now.date())
+    elapsed = sum((local_now.hour, local_now.minute) >= slot for slot in slots)
+    return elapsed * max(0, target) // len(slots)
 
 
 def weekly_due(local_now: datetime) -> bool:
