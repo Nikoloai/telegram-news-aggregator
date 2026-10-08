@@ -34,7 +34,7 @@ from aggregator.formatter import format_digest, format_post, format_weekly_diges
 from aggregator.models import FeedItem
 from aggregator.modes import RewriteMode, classify_mode
 from aggregator.review import notify_pending, process_editor_messages
-from aggregator.schedule import due_posts, weekly_due
+from aggregator.schedule import due_posts, publication_slots, weekly_due
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
@@ -187,6 +187,9 @@ def run(args: argparse.Namespace) -> RunStats:
         if args.process_editor_messages:
             return stats
         if args.scheduled_release:
+            LOGGER.info("Плановые времена по Москве: %s", ", ".join(
+                f"{hour:02d}:{minute:02d}" for hour, minute in publication_slots(local_now.date())
+            ))
             # A delayed invocation catches up to the cumulative plan, not just one post.
             published_today = storage.count_published_between(day_start, day_end)
             published_before_release = published_today
@@ -402,7 +405,8 @@ def run(args: argparse.Namespace) -> RunStats:
             previous = promise_result or related
             previous_url = telegram_post_url(channel, previous["telegram_message_id"]) if previous else None
             context = publication_context(previous, promise=bool(promise_result))
-            rubric = "correction" if correction else "promise_result" if promise_result else "quote" if quote else "emergency" if args.emergency_only else None
+            urgent_post = args.emergency_only or (args.scheduled_release and emergency)
+            rubric = "correction" if correction else "promise_result" if promise_result else "quote" if quote else "emergency" if urgent_post else None
             post = format_post(
                 body,
                 item.source,
@@ -420,7 +424,7 @@ def run(args: argparse.Namespace) -> RunStats:
                 quote=quote,
                 context=context,
                 shared_origins=evidence.shared_origins,
-                emergency=args.emergency_only,
+                emergency=urgent_post,
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
