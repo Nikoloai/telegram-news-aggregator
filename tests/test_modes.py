@@ -34,3 +34,8 @@ def test_award_news_is_not_forced_to_hard_news_by_background_war_reference() -> 
 
 def test_victim_in_lead_overrides_an_innocuous_headline() -> None:
     assert classify_mode("Власти открыли фестиваль", "При открытии погибли люди.") == RewriteMode.HARD_NEWS
+
+
+def test_health_victims_override_satirical_background():
+    assert classify_mode("После торжественного открытия произошло массовое отравление",
+                         "Чиновники объявили импортозамещение.") == RewriteMode.HARD_NEWS
