@@ -62,3 +62,10 @@ def test_topic_filter_accepts_russia_context_in_description() -> None:
         )
     )
     assert result.accepted is True
+
+
+def test_public_safety_in_novosibirsk_is_relevant_without_political_keywords():
+    result = TopicFilter().match(FeedItem("Test", "В Новосибирске выявлена санитарная опасность",
+                                         "https://example.org/safety"))
+    assert result.accepted
+    assert "public_safety" in result.topics
