@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import main
 import aggregator.editorial as editorial
 import aggregator.storage as storage_module
-from aggregator.schedule import PUBLICATION_SLOTS, due_posts, weekly_due
+from aggregator.schedule import PUBLICATION_SLOTS, publication_slots, due_posts, weekly_due
 from aggregator.models import FeedItem
 from aggregator.storage import Storage
 from tests.test_pipeline import setup_pipeline
@@ -11,17 +11,36 @@ from tests.test_pipeline import setup_pipeline
 
 def test_ten_slots_and_cumulative_catchup():
     assert len(PUBLICATION_SLOTS) == 10
-    assert due_posts(datetime(2026, 10, 8, 8, 16)) == 0
-    assert due_posts(datetime(2026, 10, 8, 8, 17)) == 1
-    assert due_posts(datetime(2026, 10, 8, 14, 20)) == 5
-    assert due_posts(datetime(2026, 10, 8, 22, 17)) == 10
+    day = date(2026, 10, 8)
+    slots = publication_slots(day)
+    first = datetime.combine(day, datetime.min.time()).replace(hour=slots[0][0], minute=slots[0][1])
+    assert due_posts(first - timedelta(minutes=1)) == 0
+    for index, (hour, minute) in enumerate(slots):
+        assert due_posts(datetime(2026, 10, 8, hour, minute)) == index + 1
+    assert due_posts(datetime(2026, 10, 8, 20, 0)) == 10
     assert due_posts(datetime(2026, 10, 9, 0, 17)) == 0
     assert weekly_due(datetime(2026, 10, 11, 21, 32))
     assert not weekly_due(datetime(2026, 10, 11, 21, 31))
 
 
-def freeze_moscow_evening(monkeypatch):
-    now = datetime(2026, 10, 8, 19, 30, tzinfo=timezone.utc)
+def test_daily_times_are_stable_varied_and_bounded():
+    first_day = date(2026, 1, 1)
+    for index in range(365):
+        day = first_day + timedelta(days=index)
+        slots = publication_slots(day)
+        minutes = [hour * 60 + minute for hour, minute in slots]
+        gaps = [right - left for left, right in zip(minutes, minutes[1:])]
+        assert slots == publication_slots(day)
+        assert len(slots) == len(set(slots)) == 10
+        assert minutes == sorted(minutes)
+        assert all(8 * 60 <= minute < 20 * 60 for minute in minutes)
+        assert all(46 <= gap <= 98 for gap in gaps)
+        assert len(set(gaps)) > 1
+    assert publication_slots(first_day) != publication_slots(first_day + timedelta(days=1))
+
+
+def freeze_moscow_evening(monkeypatch, now=None):
+    now = now or datetime(2026, 10, 8, 19, 30, tzinfo=timezone.utc)
 
     class FrozenDatetime(datetime):
         @classmethod
@@ -118,3 +137,24 @@ def test_three_disputed_candidates_do_not_block_later_safe_news(monkeypatch, tmp
     public = [text for chat, text in telegram.messages if chat == "@channel"]
     assert result.sent == 1
     assert TITLES[3] in public[0]
+
+
+def test_urgent_news_does_not_wait_for_first_daytime_slot(monkeypatch, tmp_path):
+    now = freeze_moscow_evening(monkeypatch, datetime(2026, 10, 8, 5, 0, tzinfo=timezone.utc))
+    item = FeedItem("Test", "В Москве после взрыва началась эвакуация", "https://example.org/urgent",
+                    published_at=now)
+    telegram = setup_pipeline(monkeypatch, [item])
+    result = main.run(main.parse_args(["--state", str(tmp_path / "state.db"), "--scheduled-release"]))
+    public = [text for chat, text in telegram.messages if chat == "@channel"]
+    assert due_posts(now.astimezone(main.publication_zone("Europe/Moscow"))) == 0
+    assert result.sent == 1
+    assert "СРОЧНО" in public[0]
+
+
+def test_urgent_story_in_an_ordinary_release_keeps_urgent_rubric(monkeypatch, tmp_path):
+    now = freeze_moscow_evening(monkeypatch)
+    item = FeedItem("Test", "В Москве после взрыва началась эвакуация", "https://example.org/urgent-day",
+                    published_at=now)
+    telegram = setup_pipeline(monkeypatch, [item])
+    main.run(main.parse_args(["--state", str(tmp_path / "state.db"), "--scheduled-release"]))
+    assert any("СРОЧНО" in text for chat, text in telegram.messages if chat == "@channel")
