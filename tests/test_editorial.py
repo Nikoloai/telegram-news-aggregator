@@ -132,3 +132,21 @@ def test_important_fresh_news_outranks_routine_awards_and_old_news() -> None:
     ranked = rank_news(items, [], slot=2, now_utc=now)
     assert ranked[0].url.endswith("urgent")
     assert len(ranked) == 2
+
+
+def test_mass_poisoning_is_urgent_but_routine_health_policy_is_not():
+    now = datetime(2026, 10, 8, 10, tzinfo=timezone.utc)
+    urgent = FeedItem("Test", "В России произошло массовое отравление", "https://example.org/urgent-health",
+                      published_at=now)
+    ordinary = FeedItem("Test", "В России обновили санитарные правила", "https://example.org/rules",
+                        published_at=now)
+    assert is_emergency(urgent, ["public_safety"], now)
+    assert not is_emergency(ordinary, ["public_safety"], now)
+
+
+def test_public_safety_outranks_routine_awards():
+    from aggregator.editorial import rank_news
+    now = datetime(2026, 10, 8, 10, tzinfo=timezone.utc)
+    items = [FeedItem("Test", "Чиновник получил награду в России", "https://example.org/award", published_at=now),
+             FeedItem("Test", "В России выявлена санитарная угроза", "https://example.org/safety", published_at=now)]
+    assert rank_news(items, [], slot=2, now_utc=now)[0].url.endswith("safety")
