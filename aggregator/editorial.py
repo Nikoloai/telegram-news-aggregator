@@ -34,6 +34,9 @@ EMERGENCY_PATTERNS = (
     r"\bэвакуац",
     r"\bвзрыв",
     r"\bпогибли?\b",
+    r"\bмассов.*(?:отравлен|заражен|отключен)",
+    r"\bэпидем",
+    r"\bсанитарн.*(?:угроз|опасност)",
 )
 CORRECTION_PATTERNS = (
     r"\bисправлен",
@@ -93,7 +96,7 @@ def is_emergency(item: FeedItem, topics: list[str], now_utc: datetime | None = N
         return False
     lead = re.split(r"(?<=[.!?])\s+", clean_html(item.description), maxsplit=1)[0]
     text = f"{item.title} {lead}".lower()
-    public_emergency = bool(set(topics).intersection({"war", "military", "repression", "human_rights"}))
+    public_emergency = bool(set(topics).intersection({"war", "military", "repression", "human_rights", "public_safety"}))
     public_emergency = public_emergency or bool(re.search(r"\b(?:эвакуац|чрезвычайн|взрыв|пожар)", text))
     return public_emergency and any(
         re.search(pattern, text, flags=re.IGNORECASE) for pattern in EMERGENCY_PATTERNS
@@ -171,6 +174,8 @@ def rank_news(
     preferred = preferences[slot % 4]
     weights = (
         (r"погиб|ранен|взрыв|эвакуац|обстрел", 12),
+        (r"эпидем|массов.*(?:отравлен|заражен)|санитарн.*(?:угроз|опасност)", 12),
+        (r"авари|отключен.*(?:свет|тепл|вод|электр)", 9),
         (r"арест|приговор|политзаключ|пытк", 9),
         (r"закон|налог|инфляц|санкц|блокиров|коррупц|хищен", 7),
         (r"награ|знак|пропаганд|импортозамещ", 3),
@@ -238,6 +243,7 @@ def select_weekly_highlights(
     topic_weights = {
         "war": 5,
         "repression": 5,
+        "public_safety": 5,
         "corruption": 4,
         "state_policy": 3,
         "sanctions_economy": 3,
