@@ -58,6 +58,9 @@ def format_post(
     context: str | None = None,
     shared_origins: list[str] | None = None,
     emergency: bool = False,
+    feature_title: str | None = None,
+    extra_sources: tuple[tuple[str, str], ...] = (),
+    reader_request_url: str | None = None,
 ) -> str:
     body = re.sub(r"[ \t]+", " ", body).strip()
     body = re.sub(r"^(?:⚡️?|🚨|❗️?|🔥|🔴|📌|💸|🧾|🤑|🤡|📺|🎪|⛓️|🪖|📉|🏛️|⚙️)\s*", "", body)
@@ -70,6 +73,8 @@ def format_post(
         prefix, rubric = "💬", "Цитата дня"
     elif emergency:
         prefix, rubric = "🚨", "СРОЧНО"
+    elif feature_title:
+        prefix, rubric = "🔎", feature_title
     source_label = f"Источник: {source}"
     notes: list[str] = []
     if updated:
@@ -98,6 +103,13 @@ def format_post(
         clipped = body
     escaped_url = html.escape(url, quote=True)
     footer = f'<a href="{escaped_url}">{html.escape(source_label)}</a>'
+    if extra_sources:
+        footer += "\n" + "\n".join(
+            f'<a href="{html.escape(link, quote=True)}">{html.escape(label)}</a>'
+            for label, link in extra_sources if link != url
+        )
+    if reader_request_url:
+        footer += f'\n<a href="{html.escape(reader_request_url, quote=True)}">Предложить материал для разбора</a>'
     note_block = f"\n\n{note_text}" if note_text else ""
     return f"{prefix} {header}{quote_block}{html.escape(clipped)}{note_block}\n\n{footer}"
 

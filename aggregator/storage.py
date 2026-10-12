@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .dedupe import normalize_title, normalize_url
@@ -45,6 +45,21 @@ CREATE TABLE IF NOT EXISTS review_queue (
     review_message_id INTEGER, public_message_id INTEGER,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS story_watches (
+    id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+    source TEXT NOT NULL, telegram_message_id INTEGER, started_at TEXT NOT NULL,
+    checkpoint INTEGER NOT NULL DEFAULT 7, next_check TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE'
+);
+CREATE TABLE IF NOT EXISTS reader_requests (
+    id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, source TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL, public_url TEXT,
+    angle TEXT NOT NULL DEFAULT 'facts'
+);
+CREATE TABLE IF NOT EXISTS reader_votes (
+    sender_key TEXT NOT NULL, request_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY(sender_key, request_id)
+);
 """
 
 
@@ -59,6 +74,11 @@ class Storage:
         for name in ("content", "post_html", "rubric"):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE articles ADD COLUMN {name} TEXT")
+        reader_columns = {str(row['name']) for row in self.connection.execute('PRAGMA table_info(reader_requests)')}
+        if 'public_url' not in reader_columns:
+            self.connection.execute('ALTER TABLE reader_requests ADD COLUMN public_url TEXT')
+        if 'angle' not in reader_columns:
+            self.connection.execute("ALTER TABLE reader_requests ADD COLUMN angle TEXT NOT NULL DEFAULT 'facts'")
         if self.get_meta("publication_backfill") is None:
             self.connection.execute(
                 """INSERT OR IGNORE INTO publications
@@ -124,7 +144,7 @@ class Storage:
         return list(
             self.connection.execute(
                 """
-                SELECT title, normalized_title, source, url, canonical_url, content,
+                SELECT title, normalized_title, source, url, canonical_url, content, published_at,
                        topics, telegram_message_id, updated_at, post_html, rubric
                 FROM articles
                 WHERE status = 'PUBLISHED'
@@ -302,4 +322,111 @@ class Storage:
 
     def mark_review_notified(self, review_id: int, message_id: int) -> None:
         self.connection.execute("UPDATE review_queue SET review_message_id=? WHERE id=?", (message_id, review_id))
+        self.connection.commit()
+
+    def feature_count_between(self, start: datetime, end: datetime) -> int:
+        from .features import FEATURE_RUBRICS
+        placeholders = ','.join('?' for _ in FEATURE_RUBRICS)
+        row = self.connection.execute(
+            f"SELECT COUNT(DISTINCT COALESCE(telegram_message_id, event_key)) AS n FROM publications "
+            f"WHERE rubric IN ({placeholders}) AND published_at>=? AND published_at<?",
+            (*FEATURE_RUBRICS, start.isoformat(), end.isoformat()),
+        ).fetchone()
+        return int(row['n'])
+
+    def watch_story(self, row: object) -> None:
+        from .features import worth_following
+        if not worth_following(str(row['title']), str(row['topics'] or '').split(',')):
+            return
+        if self.connection.execute("SELECT COUNT(*) FROM story_watches WHERE status='ACTIVE'").fetchone()[0] >= 60:
+            return
+        started = datetime.fromisoformat(str(row['updated_at']))
+        # Only recent stories are enrolled. Old historical rows must not flood the new desk.
+        if started < datetime.now(timezone.utc) - timedelta(days=31):
+            return
+        self.connection.execute(
+            "INSERT OR IGNORE INTO story_watches (url,title,source,telegram_message_id,started_at,next_check) "
+            "VALUES (?,?,?,?,?,?)",
+            (normalize_url(str(row['canonical_url'] or row['url'])), str(row['title']), str(row['source']),
+             row['telegram_message_id'], started.isoformat(), (started + timedelta(days=7)).isoformat()),
+        )
+        self.connection.commit()
+
+    def due_watches(self, now: datetime, limit: int = 10) -> list[sqlite3.Row]:
+        return list(self.connection.execute(
+            "SELECT * FROM story_watches WHERE status='ACTIVE' AND next_check<=? ORDER BY next_check,id LIMIT ?",
+            (now.isoformat(), limit),
+        ))
+
+    def finish_watch_checkpoint(self, watch_id: int) -> None:
+        row = self.connection.execute("SELECT * FROM story_watches WHERE id=?", (watch_id,)).fetchone()
+        if not row:
+            return
+        if row['checkpoint'] == 7:
+            next_check = datetime.fromisoformat(row['started_at']) + timedelta(days=30)
+            self.connection.execute("UPDATE story_watches SET checkpoint=30,next_check=? WHERE id=?",
+                                    (next_check.isoformat(), watch_id))
+        else:
+            self.connection.execute("UPDATE story_watches SET status='DONE' WHERE id=?", (watch_id,))
+        self.connection.commit()
+
+    def add_reader_request(self, sender_key: str, url: str, source: str,
+                           now: datetime, angle: str = 'facts') -> tuple[int | None, str]:
+        """Persist ONLY a public source URL and keyed hashes, never the user's message/ID."""
+        cutoff = (now - timedelta(days=30)).isoformat()
+        self.connection.execute("DELETE FROM reader_votes WHERE created_at<?", (cutoff,))
+        self.connection.execute("DELETE FROM reader_requests WHERE created_at<?", (cutoff,))
+        self.connection.execute("DELETE FROM reader_votes WHERE request_id NOT IN (SELECT id FROM reader_requests)")
+        count = self.connection.execute(
+            "SELECT COUNT(*) FROM reader_votes WHERE sender_key=? AND created_at>=?",
+            (sender_key, (now - timedelta(days=1)).isoformat()),
+        ).fetchone()[0]
+        if count >= 3:
+            self.connection.commit()
+            return None, 'limit'
+        pending = self.connection.execute("SELECT COUNT(*) FROM reader_requests WHERE status='PENDING'").fetchone()[0]
+        existing = self.connection.execute("SELECT * FROM reader_requests WHERE url=?", (url,)).fetchone()
+        if pending >= 200 and not existing:
+            self.connection.commit()
+            return None, 'full'
+        if angle not in {'facts', 'responsibility', 'contrast', 'cost'}:
+            angle = 'facts'
+        self.connection.execute("INSERT OR IGNORE INTO reader_requests (url,source,created_at,angle) VALUES (?,?,?,?)",
+                                (url, source, now.isoformat(), angle))
+        row = self.connection.execute("SELECT * FROM reader_requests WHERE url=?", (url,)).fetchone()
+        if row['status'] != 'PENDING':
+            self.connection.commit()
+            return int(row['id']), 'covered'
+        result = self.connection.execute(
+            "INSERT OR IGNORE INTO reader_votes VALUES (?,?,?)", (sender_key, row['id'], now.isoformat()))
+        self.connection.commit()
+        return int(row['id']), 'accepted' if result.rowcount else 'duplicate'
+
+    def prune_reader_requests(self, now: datetime) -> None:
+        cutoff = (now - timedelta(days=30)).isoformat()
+        self.connection.execute('DELETE FROM reader_requests WHERE created_at<?', (cutoff,))
+        self.connection.execute('DELETE FROM reader_votes WHERE created_at<? OR request_id NOT IN (SELECT id FROM reader_requests)',
+                                (cutoff,))
+        self.connection.commit()
+
+    def pending_reader_requests(self, limit: int = 30) -> list[sqlite3.Row]:
+        return list(self.connection.execute(
+            "SELECT r.*,COUNT(v.request_id) AS votes FROM reader_requests r "
+            "LEFT JOIN reader_votes v ON v.request_id=r.id WHERE r.status='PENDING' "
+            "GROUP BY r.id ORDER BY votes DESC,r.id LIMIT ?", (limit,),
+        ))
+
+    def index_reader_url(self, fingerprint: str, public_url: str) -> None:
+        self.connection.execute("UPDATE reader_requests SET public_url=? WHERE url=?",
+                                (normalize_url(public_url), fingerprint))
+        self.connection.commit()
+
+    def cover_reader_request(self, fingerprint: str) -> None:
+        self.connection.execute("UPDATE reader_requests SET status='COVERED' WHERE url=?", (fingerprint,))
+        self.connection.commit()
+
+    def forget_reader(self, sender_key: str) -> None:
+        self.connection.execute("DELETE FROM reader_votes WHERE sender_key=?", (sender_key,))
+        self.connection.execute("DELETE FROM reader_requests WHERE status='PENDING' "
+                                "AND id NOT IN (SELECT request_id FROM reader_votes)")
         self.connection.commit()

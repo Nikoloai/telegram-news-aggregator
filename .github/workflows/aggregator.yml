@@ -12,7 +12,7 @@ on:
         description: "Choose a release or editor commands"
         type: choice
         default: auto
-        options: [auto, scheduled, news, digest, quote, emergency, weekly, editor]
+        options: [auto, scheduled, news, digest, quote, emergency, weekly, editor, editorial]
   schedule:
     - cron: "17,47 * * * *"
     - cron: "32 18 * * 0"
@@ -46,6 +46,8 @@ jobs:
       DAILY_POST_LIMIT: ${{ vars.DAILY_POST_LIMIT || '10' }}
       POST_TIMEZONE: ${{ vars.POST_TIMEZONE || 'Europe/Moscow' }}
       STATE_DB: data/state.db
+      AUTHOR_FEATURES: ${{ vars.AUTHOR_FEATURES || 'true' }}
+      READER_BOT_USERNAME: ${{ vars.READER_BOT_USERNAME || 'tnews_aggregator_bot' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -107,6 +109,7 @@ jobs:
             digest) args+=(--digest --max-items 2) ;;
             quote) args+=(--quote-of-day --max-items 1) ;;
             editor) args+=(--process-editor-messages) ;;
+            editorial) args+=(--author-feature auto --max-items 1) ;;
           esac
           python main.py "${args[@]}"
 

@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from .models import FeedItem
 from .storage import Storage
 from .telegram import TelegramClient
+from .readers import handle_reader_command
+from .features import FEATURE_RUBRICS, valid_cost_body
 from .validator import FactPreservationValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ def notify_pending(storage: Storage, telegram: TelegramClient, editor_chat_id: s
 def process_editor_messages(
     storage: Storage, telegram: TelegramClient, editor_chat_id: str, channel: str,
     day_start: datetime, day_end: datetime, daily_limit: int, allow_publish: bool,
+    sources: list[dict[str, object]] | None = None, privacy_key: str = "",
 ) -> int:
     """Only the configured private chat and its matching sender may approve posts."""
     sent = 0
@@ -59,9 +62,24 @@ def process_editor_messages(
         text = str(message.get("text", "")).strip()
         private = isinstance(chat, dict) and isinstance(sender, dict) and chat.get("type") == "private"
         own_chat = private and chat.get("id") == sender.get("id") and not sender.get("is_bot")
-        if own_chat and text.split(" ", 1)[0].split("@", 1)[0] in {"/start", "/id"}:
+        if own_chat and text.split(" ", 1)[0].split("@", 1)[0] == "/id":
             telegram.send(str(chat["id"]), f"Твой ID для EDITOR_CHAT_ID: <code>{chat['id']}</code>")
-        elif own_chat and str(chat.get("id")) == editor_chat_id:
+        elif own_chat:
+            reply = handle_reader_command(storage, text, int(chat['id']), sources or [], privacy_key)
+            if reply:
+                telegram.send(str(chat['id']), reply)
+                storage.set_meta("telegram_update_offset", str(update_id + 1))
+                continue
+        if own_chat and str(chat.get("id")) == editor_chat_id:
+            if text == "/requests":
+                requests = storage.pending_reader_requests(limit=10)
+                reply = "Запросы читателей:\n" + "\n".join(
+                    f"№{row['id']} · {row['votes']} запросов · "
+                    + (f'<a href="{html.escape(row["public_url"], quote=True)}">{html.escape(row["source"])}</a>'
+                       if row['public_url'] else html.escape(row['source']) + ' — ждём материал в RSS')
+                    for row in requests
+                ) if requests else "Запросов пока нет."
+                telegram.send(editor_chat_id, reply)
             command = re.fullmatch(r"/(publish|skip)(?:@\w+)?\s+(\d+)", text)
             if command:
                 action, review_id = command.group(1), int(command.group(2))
@@ -79,9 +97,15 @@ def process_editor_messages(
                         response = "Дневной лимит достигнут. Пост остаётся на проверке."
                     elif row["rubric"] == "quote" and storage.rubric_count_between("quote", day_start, day_end):
                         response = "Цитата дня уже опубликована. Пост остаётся на проверке."
+                    elif row['rubric'] in FEATURE_RUBRICS and storage.feature_count_between(day_start, day_end):
+                        response = 'Авторская рубрика сегодня уже опубликована. Пост остаётся на проверке.'
                     elif datetime.fromisoformat(str(row["created_at"])) < datetime.now(timezone.utc) - timedelta(hours=48):
                         response = "Пост устарел: прошло больше 48 часов. Проверь новый материал."
-                    elif not row["body_text"] or not FactPreservationValidator().validate(row["source_text"], row["body_text"]).valid:
+                    elif not row['body_text'] or not (
+                        valid_cost_body(item, row['source_text'], row['body_text'])
+                        if row['rubric'] == 'cost' or (row['rubric'] == 'reader' and '\n\nРасчёт редакции: ' in row['body_text'])
+                        else FactPreservationValidator().validate(row['source_text'], row['body_text']).valid
+                    ):
                         response = "Проверка фактов не пройдена. Пост не опубликован."
                     else:
                         message_id = telegram.send(channel, str(row["post_html"]), preview_url=item.canonical_url or item.url)

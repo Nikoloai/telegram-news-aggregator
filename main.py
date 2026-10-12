@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -32,8 +33,12 @@ from aggregator.editorial import (
 from aggregator.filters import TopicFilter
 from aggregator.formatter import format_digest, format_post, format_weekly_digest
 from aggregator.models import FeedItem
+from aggregator.features import (
+    FEATURE_LABELS, FeatureDraft, build_followup, followup_match, select_feature,
+)
 from aggregator.modes import RewriteMode, classify_mode
 from aggregator.review import notify_pending, process_editor_messages
+from aggregator.readers import request_key, source_url
 from aggregator.schedule import due_posts, publication_slots, weekly_due
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
@@ -107,6 +112,11 @@ def telegram_post_url(channel: str, message_id: object) -> str | None:
     return f"https://t.me/{username}/{message_id}"
 
 
+def reader_bot_url() -> str | None:
+    username = os.getenv('READER_BOT_USERNAME', 'tnews_aggregator_bot').lstrip('@')
+    return f'https://t.me/{username}?start=request' if re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{4,31}', username) else None
+
+
 def load_sources(path: Path) -> list[dict[str, object]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("sources", []))
@@ -138,6 +148,61 @@ def emit_preview(item_source: str, title: str, mode: str, topics: list[str], dup
     )
 
 
+def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFetcher,
+                     telegram: TelegramClient | None, args: argparse.Namespace, channel: str,
+                     destination: str, review_mode: bool, now: datetime, privacy_key: str) -> tuple[int, int]:
+    """One checkpoint message, not a resend of an old article as today's news."""
+    fresh = [item for item in items if item.published_at and
+             now - timedelta(hours=48) <= item.published_at <= now + timedelta(minutes=15)]
+    if not fresh:
+        return 0, 0  # An empty/failed collector is not evidence of an absent update.
+    if any(is_emergency(item, TopicFilter().match(item).topics, now)
+           and not storage.find_exact(normalize_url(item.url), normalize_title(item.title)) for item in fresh):
+        return 0, 0  # Breaking news must not be delayed by a retrospective.
+    for watch in storage.due_watches(now):
+        identity = f"https://t.me/{channel.lstrip('@')}?watch={watch['id']}&checkpoint={watch['checkpoint']}"
+        title = f"Возвращаемся к истории: {watch['title']} (проверка {watch['checkpoint']})"
+        if storage.find_exact(normalize_url(identity), normalize_title(title)):
+            continue
+        matching = next((item for item in fresh if followup_match(str(watch['title']), item)
+                         and item.published_at > datetime.fromisoformat(watch['started_at'])), None)
+        current = fetcher.fetch(matching) if matching else None
+        if matching:
+            evidence = source_evidence(matching, fresh)
+            reasons = review_reasons(f"{matching.title}\n{current.text}", current.text,
+                                     RewriteMode.HARD_NEWS, evidence.conflicts, [])
+            if reasons:
+                continue  # No amplification of a disputed update via the author rubric.
+        draft = build_followup(watch, current, now, channel)
+        post = format_post(draft.body, str(watch['source']), str(watch['url']), max_chars=2200,
+                           feature_title=FEATURE_LABELS['followup'], extra_sources=draft.extra_sources,
+                           reader_request_url=reader_bot_url())
+        item = FeedItem('Редакция', title, identity, published_at=now)
+        emit_preview(item.source, item.title, 'ANALYSIS', ['followup'], False, post)
+        if args.dry_run:
+            return 0, 1
+        if not telegram or not destination:
+            return 0, 1
+        try:
+            message_id = telegram.send(destination, post, preview_url=str(watch['url']))
+        except Exception as exc:
+            LOGGER.warning('Отправка проверки истории не удалась: %s', type(exc).__name__)
+            return 0, 1
+        status = 'SENT_TO_REVIEW' if review_mode else 'PUBLISHED'
+        storage.save(item, status, draft.body, 'ANALYSIS', ['followup'],
+                     telegram_message_id=message_id, post_html=post, rubric='followup')
+        if not review_mode:
+            storage.finish_watch_checkpoint(int(watch['id']))
+            if current:
+                # Two article records may refer to this ONE actual Telegram message.
+                storage.save(current.item, 'PUBLISHED', current.text, 'ANALYSIS',
+                             TopicFilter().match(current.item).topics, telegram_message_id=message_id,
+                             post_html=post, rubric='followup')
+                storage.cover_reader_request(request_key(privacy_key, current.item.url))
+        return 1, 1
+    return 0, 0
+
+
 def run(args: argparse.Namespace) -> RunStats:
     args = argparse.Namespace(**vars(args))
     sources = load_sources(args.config)
@@ -167,6 +232,8 @@ def run(args: argparse.Namespace) -> RunStats:
 
     try:
         day_start, day_end = publication_day_window(post_timezone)
+        if not args.dry_run:
+            storage.prune_reader_requests(datetime.now(timezone.utc))
         local_now = datetime.now(timezone.utc).astimezone(publication_zone(post_timezone))
         iso_year, iso_week, _ = local_now.date().isocalendar()
         weekly_item = FeedItem(
@@ -179,6 +246,7 @@ def run(args: argparse.Namespace) -> RunStats:
                 stats.sent += process_editor_messages(
                     storage, telegram, editor_chat_id, channel, day_start, day_end,
                     daily_limit, allow_publish=not review_mode,
+                    sources=sources, privacy_key=token,
                 )
                 notify_pending(storage, telegram, editor_chat_id)
             except Exception as exc:
@@ -245,6 +313,8 @@ def run(args: argparse.Namespace) -> RunStats:
                 LOGGER.info("Для недельного дайджеста пока нет опубликованных материалов")
                 return stats
             weekly_post = format_weekly_digest(select_weekly_highlights(rows), channel)
+            if env_bool('AUTHOR_FEATURES', True) and reader_bot_url():
+                weekly_post += f'\n\n<a href="{reader_bot_url()}">Предложить материал для разбора</a>'
             print("\n".join(["=" * 72, "WEEKLY DIGEST PREVIEW:", weekly_post]))
             stats.previews = 1
             status = "DRY_RUN" if args.dry_run else "REVIEW_READY"
@@ -281,8 +351,42 @@ def run(args: argparse.Namespace) -> RunStats:
         held_for_review = 0
         emoji_cursor = published_today
         recent_publications = storage.recent_published()
+        if env_bool('AUTHOR_FEATURES', True):
+            for row in recent_publications:
+                if row['rubric'] != 'followup':
+                    storage.watch_story(row)
+        feature_allowed = (env_bool('AUTHOR_FEATURES', True) and effective_max_items > 0 and not digest_mode
+                           and not args.emergency_only and not args.quote_of_day
+                           and storage.feature_count_between(day_start, day_end) == 0)
+        feature_preference = args.author_feature or 'auto'
+        requests = {str(row['url']): row for row in storage.pending_reader_requests()}
+        for item in items:
+            fingerprint = request_key(token, item.url)
+            if fingerprint in requests and source_url(item.url, sources):
+                storage.index_reader_url(fingerprint, item.url)
+        # Suggestions influence selection ONLY if the public URL is independently in a
+        # connected current RSS feed. Never fetch a URL supplied by a private message.
+        if feature_allowed and (args.scheduled_release or args.author_feature):
+            items.sort(key=lambda item: (not is_emergency(item, topic_filter.match(item).topics),
+                                        request_key(token, item.url) not in requests))
+            if feature_preference in {'auto', 'followup'}:
+                follow_sent, follow_previews = release_followup(
+                    storage, items, article_fetcher, telegram, args, channel,
+                    review_chat_id if review_mode else channel, review_mode, datetime.now(timezone.utc), token,
+                )
+                stats.sent += follow_sent
+                stats.previews += follow_previews
+                if follow_sent or (args.dry_run and follow_previews):
+                    produced += 1
+                    feature_allowed = False
+                    published_today += int(bool(follow_sent and not review_mode))
+        if produced >= effective_max_items:
+            return stats
         items = rank_news(items, recent_publications, published_today,
                           max_age_hours=max(3, int(os.getenv("NEWS_MAX_AGE_HOURS", "48"))))
+        if feature_allowed and (args.scheduled_release or args.author_feature):
+            items.sort(key=lambda item: (not is_emergency(item, topic_filter.match(item).topics),
+                                        request_key(token, item.url) not in requests))
         candidates_checked = 0
         for item in items:
             if args.quote_of_day and not extract_title_quote(item.title):
@@ -407,6 +511,26 @@ def run(args: argparse.Namespace) -> RunStats:
             context = publication_context(previous, promise=bool(promise_result))
             urgent_post = args.emergency_only or (args.scheduled_release and emergency)
             rubric = "correction" if correction else "promise_result" if promise_result else "quote" if quote else "emergency" if urgent_post else None
+            feature = None
+            if (feature_allowed and not correction and not urgent_post and not promise_result
+                    and not rewrite_warnings and (args.scheduled_release or args.author_feature)):
+                if (request_key(token, item.url) in requests and source_url(item.url, sources)
+                        and feature_preference in {'auto', 'reader'}):
+                    angle = requests[request_key(token, item.url)]['angle']
+                    requested_draft = select_feature(article, recent_publications, datetime.now(timezone.utc),
+                                                     publication_zone(post_timezone), angle)
+                    feature = (FeatureDraft('reader', requested_draft.body, requested_draft.evidence,
+                                            requested_draft.extra_sources) if requested_draft
+                               else FeatureDraft('reader', 'Что сообщает источник:\n\n' + body))
+                else:
+                    feature = select_feature(article, recent_publications, datetime.now(timezone.utc),
+                                             publication_zone(post_timezone), feature_preference)
+                if feature:
+                    body, rubric, quote = feature.body, feature.rubric, None
+                    # Historical evidence is needed for a later private editor review too.
+                    validation_source += '\n' + '\n'.join(feature.evidence)
+                    mode = (RewriteMode.HARD_NEWS if classify_mode(item.title, body) == RewriteMode.HARD_NEWS
+                            else RewriteMode.ANALYSIS)
             post = format_post(
                 body,
                 item.source,
@@ -425,6 +549,10 @@ def run(args: argparse.Namespace) -> RunStats:
                 context=context,
                 shared_origins=evidence.shared_origins,
                 emergency=urgent_post,
+                feature_title=FEATURE_LABELS[feature.rubric] if feature else None,
+                extra_sources=feature.extra_sources if feature else (),
+                max_chars=2200 if feature else 1000,
+                reader_request_url=reader_bot_url() if feature else None,
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
@@ -477,6 +605,8 @@ def run(args: argparse.Namespace) -> RunStats:
                     stats.sent += 1
                     if status == "PUBLISHED":
                         published_today += 1
+                        if feature:
+                            feature_allowed = False
                 except Exception as exc:
                     status = "SEND_FAILED"
                     produced -= 1
@@ -498,6 +628,14 @@ def run(args: argparse.Namespace) -> RunStats:
                 post_html=post,
                 rubric=rubric,
             )
+            if feature and (args.dry_run or status == 'SENT_TO_REVIEW'):
+                feature_allowed = False
+            if status == 'PUBLISHED':
+                storage.cover_reader_request(request_key(token, item.url))
+                if env_bool('AUTHOR_FEATURES', True):
+                    recent = storage.recent_published(limit=1)
+                    if recent:
+                        storage.watch_story(recent[0])
             if correction and status in {"PUBLISHED", "SENT_TO_REVIEW", "REVIEW_READY", "DRY_RUN"}:
                 storage.set_meta(f"correction_seen:{normalize_url(item.canonical_url or item.url)}", feed_signature)
             if produced >= effective_max_items:
@@ -580,6 +718,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--process-editor-messages", action="store_true", help="Handle private editor commands only")
     parser.add_argument("--scheduled-release", action="store_true", help="Catch up to the ten-post daily plan")
     parser.add_argument("--max-candidates", type=int, default=40, help="Limit article extraction and rewriting per run")
+    parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader'],
+                        help='Use at most one evidence-backed author rubric within the daily quota')
     return parser.parse_args(argv)
 
 
