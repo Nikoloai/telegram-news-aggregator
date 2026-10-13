@@ -36,7 +36,7 @@ from aggregator.models import FeedItem
 from aggregator.features import (
     FEATURE_LABELS, FeatureDraft, build_followup, followup_match, select_feature,
 )
-from aggregator.modes import RewriteMode, classify_mode
+from aggregator.modes import RewriteMode, editorial_mode, satirical_tail
 from aggregator.review import notify_pending, process_editor_messages
 from aggregator.readers import request_key, source_url
 from aggregator.schedule import due_posts, publication_slots, weekly_due
@@ -467,8 +467,8 @@ def run(args: argparse.Namespace) -> RunStats:
                     stats.duplicates += 1
                     continue
 
-            mode = classify_mode(item.title, article.text)
-            if args.emergency_only:
+            mode = editorial_mode(item.title, article.text)
+            if args.emergency_only or (args.scheduled_release and emergency):
                 mode = RewriteMode.HARD_NEWS
             related = related_publication(item.title, recent_publications)
             promise_result = None
@@ -481,8 +481,10 @@ def run(args: argparse.Namespace) -> RunStats:
                 quote = extract_title_quote(item.title)
             if args.quote_of_day and not quote:
                 continue
+            satire_rewritten = False
             try:
                 body = rewriter.rewrite(article, mode)
+                satire_rewritten = mode == RewriteMode.SATIRICAL and not isinstance(rewriter, FallbackRewriter)
             except Exception as exc:  # provider failure must not stop the run
                 LOGGER.warning("LLM rewrite не удался (%s), используется fallback", type(exc).__name__)
                 body = FallbackRewriter().rewrite(article, mode)
@@ -500,6 +502,7 @@ def run(args: argparse.Namespace) -> RunStats:
                     stats.validation_failed += 1
                     continue
                 body, validation = safe_body, safe_validation
+                satire_rewritten = False
                 rewrite_warnings.append("Переписывание изменило факты; подготовлен исходный пересказ для проверки")
 
             evidence = source_evidence(item, items)
@@ -512,6 +515,7 @@ def run(args: argparse.Namespace) -> RunStats:
             urgent_post = args.emergency_only or (args.scheduled_release and emergency)
             rubric = "correction" if correction else "promise_result" if promise_result else "quote" if quote else "emergency" if urgent_post else None
             feature = None
+            author_commentary = None
             if (feature_allowed and not correction and not urgent_post and not promise_result
                     and not rewrite_warnings and (args.scheduled_release or args.author_feature)):
                 if (request_key(token, item.url) in requests and source_url(item.url, sources)
@@ -526,11 +530,15 @@ def run(args: argparse.Namespace) -> RunStats:
                     feature = select_feature(article, recent_publications, datetime.now(timezone.utc),
                                              publication_zone(post_timezone), feature_preference)
                 if feature:
+                    # Keep calculations/evidence exact; reuse only the validated author's ending.
+                    if satire_rewritten and feature.body != 'Что сообщает источник:\n\n' + body:
+                        author_commentary = satirical_tail(body)
                     body, rubric, quote = feature.body, feature.rubric, None
                     # Historical evidence is needed for a later private editor review too.
                     validation_source += '\n' + '\n'.join(feature.evidence)
-                    mode = (RewriteMode.HARD_NEWS if classify_mode(item.title, body) == RewriteMode.HARD_NEWS
-                            else RewriteMode.ANALYSIS)
+                    mode = editorial_mode(item.title, article.text + '\n' + body)
+                    if mode != RewriteMode.SATIRICAL:
+                        author_commentary = None
             post = format_post(
                 body,
                 item.source,
@@ -551,13 +559,15 @@ def run(args: argparse.Namespace) -> RunStats:
                 emergency=urgent_post,
                 feature_title=FEATURE_LABELS[feature.rubric] if feature else None,
                 extra_sources=feature.extra_sources if feature else (),
-                max_chars=2200 if feature else 1000,
+                max_chars=2200 if feature else 1400,
                 reader_request_url=reader_bot_url() if feature else None,
+                author_commentary=author_commentary,
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
             stats.previews += 1
-            reasons = review_reasons(validation_source, body, mode, evidence.conflicts, validation.warnings)
+            review_body = body + ('\n\n' + author_commentary if author_commentary else '')
+            reasons = review_reasons(validation_source, review_body, mode, evidence.conflicts, validation.warnings)
             reasons.extend(rewrite_warnings)
             if reasons and env_bool("REVIEW_UNCERTAIN", True):
                 LOGGER.info("Материал удержан для редактора: %s", "; ".join(reasons))

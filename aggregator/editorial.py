@@ -8,7 +8,7 @@ from enum import StrEnum
 from .article import clean_html
 from .corroboration import stories_match
 from .models import FeedItem
-from .modes import RewriteMode, classify_mode
+from .modes import RewriteMode, classify_mode, requires_serious_tone
 
 
 class ConfirmationLevel(StrEnum):
@@ -96,6 +96,11 @@ def is_emergency(item: FeedItem, topics: list[str], now_utc: datetime | None = N
         return False
     lead = re.split(r"(?<=[.!?])\s+", clean_html(item.description), maxsplit=1)[0]
     text = f"{item.title} {lead}".lower()
+    # A diplomat's new job after an old explosion is not a fresh emergency.
+    if (re.search(r'\bвзрыв', text) and not requires_serious_tone(item.title, lead)
+            and not any(re.search(pattern, text, re.I) for pattern in EMERGENCY_PATTERNS
+                        if pattern != r'\bвзрыв')):
+        return False
     public_emergency = bool(set(topics).intersection({"war", "military", "repression", "human_rights", "public_safety"}))
     public_emergency = public_emergency or bool(re.search(r"\b(?:эвакуац|чрезвычайн|взрыв|пожар)", text))
     return public_emergency and any(
@@ -155,7 +160,7 @@ def review_reasons(
     if mode in {RewriteMode.IRONIC, RewriteMode.SATIRICAL}:
         if re.search(r"\b(?:идиот\w*|дебил\w*|твар\w*|мраз\w*|ублюд\w*)\b", body, re.I):
             reasons.append("Оскорбительная формулировка требует редакторской проверки")
-        if classify_mode("", body) == RewriteMode.HARD_NEWS:
+        if requires_serious_tone(body.split('\n', 1)[0], body):
             reasons.append("Ироничный текст содержит тему жертв или репрессий")
     return list(dict.fromkeys(reasons))
 

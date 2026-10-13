@@ -47,6 +47,7 @@ jobs:
       POST_TIMEZONE: ${{ vars.POST_TIMEZONE || 'Europe/Moscow' }}
       STATE_DB: data/state.db
       AUTHOR_FEATURES: ${{ vars.AUTHOR_FEATURES || 'true' }}
+      EDITORIAL_STYLE: ${{ vars.EDITORIAL_STYLE || 'satirical' }}
       READER_BOT_USERNAME: ${{ vars.READER_BOT_USERNAME || 'tnews_aggregator_bot' }}
 
     steps:

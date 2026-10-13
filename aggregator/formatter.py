@@ -33,7 +33,7 @@ def _presentation(body: str, topics: list[str], mode: RewriteMode, emoji_index: 
             return emoji, "Страна возможностей"
         if "propaganda" in topics:
             return emoji, "Гойда дня"
-        return emoji, "Стабильность"
+        return emoji, None
     if mode == RewriteMode.IRONIC:
         return emoji, "Сухой остаток"
     return emoji, None
@@ -61,6 +61,7 @@ def format_post(
     feature_title: str | None = None,
     extra_sources: tuple[tuple[str, str], ...] = (),
     reader_request_url: str | None = None,
+    author_commentary: str | None = None,
 ) -> str:
     body = re.sub(r"[ \t]+", " ", body).strip()
     body = re.sub(r"^(?:⚡️?|🚨|❗️?|🔥|🔴|📌|💸|🧾|🤑|🤡|📺|🎪|⛓️|🪖|📉|🏛️|⚙️)\s*", "", body)
@@ -77,6 +78,8 @@ def format_post(
         prefix, rubric = "🔎", feature_title
     source_label = f"Источник: {source}"
     notes: list[str] = []
+    if author_commentary:
+        notes.append(html.escape(author_commentary))
     if updated:
         notes.append("<b>ОБНОВЛЕНО</b>")
     if confirmation:

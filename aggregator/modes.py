@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from enum import StrEnum
 
@@ -54,3 +55,61 @@ def classify_mode(title: str, text: str = "") -> RewriteMode:
     if _has(focal, ANALYSIS_PATTERNS):
         return RewriteMode.ANALYSIS
     return RewriteMode.ANALYSIS
+
+
+VICTIM_PATTERNS = (
+    'погиб', 'ранен', 'убит', 'жертв', 'пострад', 'гибел', 'смерт', 'сконч',
+    r'умер(?:ла|ли|ло|еть)?\b', 'пытк', 'пленн', 'заложник', 'избиен', 'избили',
+    'эпидем', 'отравлен', 'заражен', 'санитарн.*(?:угроз|опасност)', 'политзаключ',
+)
+PUBLIC_TARGETS = (
+    'чиновник', 'министр', 'губернатор', 'мэр', 'депутат', 'кремл', 'путин', 'кадыров',
+    'дипломат', 'военн.*атташе', 'мид', 'госдум', 'правительств', 'ведомств',
+)
+BUREAUCRATIC_TARGET = (
+    'наград', 'почетн', 'знак',
+    'должност', 'работ.*посольств', 'аккредитац', 'взятк', 'хищен', 'коррупц',
+)
+REPRESSION_VICTIMS = (
+    'журналист', 'правозащит', 'оппозиционер', 'активист', 'протестующ',
+    'митингующ', 'несовершеннолет', 'лгбт', 'антивоенн', 'пацифист',
+)
+
+
+def requires_serious_tone(title: str, text: str = '') -> bool:
+    value = f'{title} {text}'.lower().replace('ё', 'е')
+    if _has(value, VICTIM_PATTERNS):
+        return True
+    if (_has(value, REPRESSION_VICTIMS)
+            and _has(value, ('арест', 'задерж', 'уголовн.*дел', 'сизо', 'колони', 'преслед'))):
+        return True
+    # An official's award, public statement or career is not a casualty report.
+    # This never overrides the victim/medical/repression guard above.
+    lead = re.split(r'\n\s*\n|\n', text.strip(), maxsplit=1)[0]
+    focal = f'{title} ' + ' '.join(re.split(r'(?<=[.!?])\s+', lead)[:2])[:700]
+    if _has(focal, ('обстрел', 'атак', 'катастроф', 'пожар', 'горит', 'эвакуац', 'насили', 'насиль', 'авари')):
+        return True
+    base = classify_mode(title, text)
+    if base != RewriteMode.HARD_NEWS:
+        return False
+    # A public actor mentioned only in background must not turn an arrest into a joke.
+    return not (_has(title, PUBLIC_TARGETS) and _has(focal, BUREAUCRATIC_TARGET))
+
+
+def editorial_mode(title: str, text: str = '', style: str | None = None) -> RewriteMode:
+    style = (style or os.getenv('EDITORIAL_STYLE', 'satirical')).strip().lower()
+    if style != 'satirical':
+        return classify_mode(title, text)
+    return RewriteMode.HARD_NEWS if requires_serious_tone(title, text) else RewriteMode.SATIRICAL
+
+
+def satirical_tail(body: str) -> str | None:
+    """Reuse the already fact-validated final remark; never invent a second story."""
+    paragraphs = [part.strip() for part in re.split(r'\n\s*\n', body) if part.strip()]
+    if len(paragraphs) < 2:
+        return None
+    tail = paragraphs[-1]
+    # Calculations, quotes and event details belong in evidence, not an extra punchline.
+    if not 25 <= len(tail) <= 320 or re.search(r'\d|https?://|«|»', tail):
+        return None
+    return tail
