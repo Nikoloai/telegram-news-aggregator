@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS reader_votes (
     sender_key TEXT NOT NULL, request_id INTEGER NOT NULL, created_at TEXT NOT NULL,
     PRIMARY KEY(sender_key, request_id)
 );
+CREATE TABLE IF NOT EXISTS style_memory (
+    event_key TEXT PRIMARY KEY, body_text TEXT NOT NULL, created_at TEXT NOT NULL
+);
 """
 
 
@@ -87,6 +90,12 @@ class Storage:
             )
             self.set_meta("publication_backfill", "done")
         self.connection.commit()
+
+        if self.get_meta('style_memory_backfill') is None:
+            for row in reversed(self.recent_published(limit=30)):
+                if row['post_html'] and row['rewrite_mode'] == 'SATIRICAL':
+                    self.remember_style(str(row['url']), str(row['post_html']), str(row['updated_at']))
+            self.set_meta('style_memory_backfill', 'done')
 
     def close(self) -> None:
         self.connection.close()
@@ -145,7 +154,7 @@ class Storage:
             self.connection.execute(
                 """
                 SELECT title, normalized_title, source, url, canonical_url, content, published_at,
-                       topics, telegram_message_id, updated_at, post_html, rubric
+                       topics, telegram_message_id, updated_at, post_html, rubric, rewrite_mode
                 FROM articles
                 WHERE status = 'PUBLISHED'
                 ORDER BY updated_at DESC
@@ -267,7 +276,27 @@ class Storage:
                 "INSERT OR IGNORE INTO publications VALUES (?, ?, ?, ?, ?)",
                 (event_key, normalized, now, rubric, telegram_message_id),
             )
+            if rewrite_mode == 'SATIRICAL' and post_html:
+                self.remember_style(event_key, post_html, now)
         self.connection.commit()
+
+    def remember_style(self, event_key: str, post_html: str, created_at: str) -> None:
+        from rewriter.variation import editorial_text
+        body = editorial_text(post_html)
+        if body:
+            self.connection.execute('INSERT OR IGNORE INTO style_memory VALUES (?,?,?)',
+                                    (event_key, body[:2400], created_at))
+            self.connection.execute('DELETE FROM style_memory WHERE event_key NOT IN '
+                                    '(SELECT event_key FROM style_memory ORDER BY created_at DESC, rowid DESC LIMIT 30)')
+            self.connection.commit()
+
+    def recent_style(self) -> list[str]:
+        return [str(row[0]) for row in self.connection.execute(
+            'SELECT body_text FROM style_memory ORDER BY created_at DESC, rowid DESC LIMIT 30')]
+
+    def satire_count_between(self, start: datetime, end: datetime) -> int:
+        from .satire import SATIRE_RUBRICS
+        return sum(self.rubric_count_between(rubric, start, end) for rubric in SATIRE_RUBRICS)
 
     def get_meta(self, key: str) -> str | None:
         row = self.connection.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()

@@ -37,6 +37,7 @@ from aggregator.features import (
     FEATURE_LABELS, FeatureDraft, build_followup, followup_match, select_feature,
 )
 from aggregator.modes import RewriteMode, editorial_mode, satirical_tail
+from aggregator.satire import select_satire_feature, satire_week_window
 from aggregator.review import notify_pending, process_editor_messages
 from aggregator.readers import request_key, source_url
 from aggregator.schedule import due_posts, publication_slots, weekly_due
@@ -44,6 +45,7 @@ from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
 from rewriter import FallbackRewriter, LLMRewriter, Rewriter
+from rewriter.variation import varied_rewrite, repeated_phrases
 
 LOGGER = logging.getLogger("aggregator")
 
@@ -481,13 +483,37 @@ def run(args: argparse.Namespace) -> RunStats:
                 quote = extract_title_quote(item.title)
             if args.quote_of_day and not quote:
                 continue
+            style_history = storage.recent_style() if env_bool('STYLE_VARIATION', True) else []
+            week_start, week_end = satire_week_window(datetime.now(timezone.utc), publication_zone(post_timezone))
+            satire_draft = None
+            if (feature_allowed and env_bool('SATIRE_RUBRICS', True) and mode == RewriteMode.SATIRICAL
+                    and not correction and not promise_result and not emergency and not args.quote_of_day
+                    and not (feature_preference == 'auto' and request_key(token, item.url) in requests)
+                    and (args.scheduled_release or args.author_feature)
+                    and callable(getattr(rewriter, 'rewrite_commentary', None))):
+                satire_draft = select_satire_feature(
+                    article, feature_preference, storage.satire_count_between(week_start, week_end),
+                    storage.rubric_count_between('excuse', week_start, week_end),
+                )
+            author_commentary = None
             satire_rewritten = False
             try:
-                body = rewriter.rewrite(article, mode)
+                if satire_draft:
+                    author_commentary = varied_rewrite(rewriter, article, mode, style_history, satire_draft)
+                    if (not 60 <= len(author_commentary) <= 320
+                            or re.search(r'\d|[«»"“”]|https?://', author_commentary)
+                            or not validator.validate(article.text, author_commentary).valid):
+                        raise ValueError('Unsafe or malformed satirical commentary')
+                    body = satire_draft.body
+                elif isinstance(rewriter, FallbackRewriter):
+                    body = rewriter.rewrite(article, mode)
+                else:
+                    body = varied_rewrite(rewriter, article, mode, style_history)
                 satire_rewritten = mode == RewriteMode.SATIRICAL and not isinstance(rewriter, FallbackRewriter)
             except Exception as exc:  # provider failure must not stop the run
                 LOGGER.warning("LLM rewrite не удался (%s), используется fallback", type(exc).__name__)
                 body = FallbackRewriter().rewrite(article, mode)
+                satire_draft, author_commentary = None, None
 
             validation_source = f"{item.title}\n{article.text}\n{item.description}"
             validation = validator.validate(validation_source, body, title=item.title)
@@ -503,6 +529,7 @@ def run(args: argparse.Namespace) -> RunStats:
                     continue
                 body, validation = safe_body, safe_validation
                 satire_rewritten = False
+                satire_draft, author_commentary = None, None
                 rewrite_warnings.append("Переписывание изменило факты; подготовлен исходный пересказ для проверки")
 
             evidence = source_evidence(item, items)
@@ -514,9 +541,11 @@ def run(args: argparse.Namespace) -> RunStats:
             context = publication_context(previous, promise=bool(promise_result))
             urgent_post = args.emergency_only or (args.scheduled_release and emergency)
             rubric = "correction" if correction else "promise_result" if promise_result else "quote" if quote else "emergency" if urgent_post else None
-            feature = None
-            author_commentary = None
-            if (feature_allowed and not correction and not urgent_post and not promise_result
+            feature = satire_draft
+            if feature:
+                rubric, quote = feature.rubric, None
+                validation_source += '\n' + '\n'.join(feature.evidence)
+            if (not feature and feature_allowed and not correction and not urgent_post and not promise_result
                     and not rewrite_warnings and (args.scheduled_release or args.author_feature)):
                 if (request_key(token, item.url) in requests and source_url(item.url, sources)
                         and feature_preference in {'auto', 'reader'}):
@@ -539,6 +568,9 @@ def run(args: argparse.Namespace) -> RunStats:
                     mode = editorial_mode(item.title, article.text + '\n' + body)
                     if mode != RewriteMode.SATIRICAL:
                         author_commentary = None
+            # Structured cards may reuse an old ending: that ending needs the same guard.
+            if author_commentary and repeated_phrases(author_commentary, style_history, validation_source):
+                author_commentary = None
             post = format_post(
                 body,
                 item.source,
@@ -562,6 +594,8 @@ def run(args: argparse.Namespace) -> RunStats:
                 max_chars=2200 if feature else 1400,
                 reader_request_url=reader_bot_url() if feature else None,
                 author_commentary=author_commentary,
+                author_commentary_label=('Авторский перевод (сатира)' if feature and feature.rubric == 'translation'
+                                         else 'Авторский разбор (сатира)' if satire_draft else None),
             )
             emoji_cursor += 1
             emit_preview(item.source, item.title, mode.value, topic_match.topics, False, post)
@@ -728,7 +762,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--process-editor-messages", action="store_true", help="Handle private editor commands only")
     parser.add_argument("--scheduled-release", action="store_true", help="Catch up to the ten-post daily plan")
     parser.add_argument("--max-candidates", type=int, default=40, help="Limit article extraction and rewriting per run")
-    parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader'],
+    parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader', 'translation', 'excuse', 'career'],
                         help='Use at most one evidence-backed author rubric within the daily quota')
     return parser.parse_args(argv)
 

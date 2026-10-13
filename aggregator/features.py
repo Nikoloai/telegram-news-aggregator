@@ -10,11 +10,12 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from .article import clean_html
 from .models import Article, FeedItem
 
-FEATURE_RUBRICS = ("responsibility", "followup", "contrast", "cost", "reader")
+FEATURE_RUBRICS = ("responsibility", "followup", "contrast", "cost", "reader", "translation", "excuse", "career")
 FEATURE_LABELS = {
     "responsibility": "Кто отвечал", "followup": "Не забыли",
     "contrast": "Две России в один день", "cost": "Цена решения",
     "reader": "Разбор по запросу",
+    "translation": "Перевод с чиновничьего", "excuse": "Отмазка недели", "career": "Карьерный лифт",
 }
 
 

@@ -62,6 +62,7 @@ def format_post(
     extra_sources: tuple[tuple[str, str], ...] = (),
     reader_request_url: str | None = None,
     author_commentary: str | None = None,
+    author_commentary_label: str | None = None,
 ) -> str:
     body = re.sub(r"[ \t]+", " ", body).strip()
     body = re.sub(r"^(?:⚡️?|🚨|❗️?|🔥|🔴|📌|💸|🧾|🤑|🤡|📺|🎪|⛓️|🪖|📉|🏛️|⚙️)\s*", "", body)
@@ -79,7 +80,8 @@ def format_post(
     source_label = f"Источник: {source}"
     notes: list[str] = []
     if author_commentary:
-        notes.append(html.escape(author_commentary))
+        label = f'<b>{html.escape(author_commentary_label)}</b>\n' if author_commentary_label else ''
+        notes.append(label + html.escape(author_commentary))
     if updated:
         notes.append("<b>ОБНОВЛЕНО</b>")
     if confirmation:

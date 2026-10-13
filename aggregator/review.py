@@ -11,6 +11,7 @@ from .storage import Storage
 from .telegram import TelegramClient
 from .readers import handle_reader_command
 from .features import FEATURE_RUBRICS, valid_cost_body
+from .satire import SATIRE_RUBRICS, satire_week_window
 from .validator import FactPreservationValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def process_editor_messages(
 ) -> int:
     """Only the configured private chat and its matching sender may approve posts."""
     sent = 0
+    week_start, week_end = satire_week_window(datetime.now(timezone.utc))
     offset = int(storage.get_meta("telegram_update_offset") or "0")
     for update in telegram.get_updates(offset):
         update_id = update.get("update_id")
@@ -99,6 +101,10 @@ def process_editor_messages(
                         response = "Цитата дня уже опубликована. Пост остаётся на проверке."
                     elif row['rubric'] in FEATURE_RUBRICS and storage.feature_count_between(day_start, day_end):
                         response = 'Авторская рубрика сегодня уже опубликована. Пост остаётся на проверке.'
+                    elif row['rubric'] in SATIRE_RUBRICS and storage.satire_count_between(week_start, week_end) >= 2:
+                        response = 'Две сатирические рубрики на этой неделе уже опубликованы. Пост остаётся на проверке.'
+                    elif row['rubric'] == 'excuse' and storage.rubric_count_between('excuse', week_start, week_end):
+                        response = 'Отмазка недели уже опубликована. Пост остаётся на проверке.'
                     elif datetime.fromisoformat(str(row["created_at"])) < datetime.now(timezone.utc) - timedelta(hours=48):
                         response = "Пост устарел: прошло больше 48 часов. Проверь новый материал."
                     elif not row['body_text'] or not (
