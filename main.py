@@ -40,7 +40,7 @@ from aggregator.modes import RewriteMode, editorial_mode, satirical_tail
 from aggregator.satire import select_satire_feature, satire_week_window
 from aggregator.review import notify_pending, process_editor_messages
 from aggregator.readers import request_key, source_url
-from aggregator.schedule import due_posts, publication_slots, weekly_due
+from aggregator.schedule import due_posts, publication_slots, weekly_due, regular_release_due, spacing_ready
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
@@ -260,7 +260,7 @@ def run(args: argparse.Namespace) -> RunStats:
             LOGGER.info("Плановые времена по Москве: %s", ", ".join(
                 f"{hour:02d}:{minute:02d}" for hour, minute in publication_slots(local_now.date())
             ))
-            # A delayed invocation catches up to the cumulative plan, not just one post.
+            # A delayed invocation may fill only the current slot, never a backlog.
             published_today = storage.count_published_between(day_start, day_end)
             published_before_release = published_today
             has_weekly = bool(storage.find_exact(normalize_url(weekly_item.url), normalize_title(weekly_item.title)))
@@ -270,8 +270,9 @@ def run(args: argparse.Namespace) -> RunStats:
                 target = due_posts(local_now, daily_limit)
                 if local_now.weekday() == 6 and not has_weekly:
                     target = min(target, max(0, daily_limit - 1))
-                expected_posts = max(0, target - published_today)
-                effective_max_items = expected_posts
+                expected_posts = int(published_today < target and regular_release_due(
+                    local_now, storage.last_publication_at()))
+                effective_max_items = 1
                 digest_mode = False
                 if not expected_posts:
                     args.emergency_only = True
@@ -279,6 +280,9 @@ def run(args: argparse.Namespace) -> RunStats:
                 LOGGER.info("Суточный план: published=%d due=%d needed=%d limit=%d timezone=%s",
                             published_today, target if not args.weekly_digest else daily_limit,
                             expected_posts, daily_limit, post_timezone)
+                if not expected_posts and not args.weekly_digest:
+                    LOGGER.info('Обычный выпуск пока не положен: текущий интервал заполнен, пауза меньше часа '
+                                'или дневное окно закрыто. Проверяем только срочные новости.')
         if args.quote_of_day and quote_used:
             LOGGER.info("Цитата дня уже опубликована")
             return stats
@@ -305,6 +309,10 @@ def run(args: argparse.Namespace) -> RunStats:
                 daily_limit,
                 post_timezone,
             )
+
+        if (args.quote_of_day or args.weekly_digest) and not spacing_ready(local_now, storage.last_publication_at()):
+            LOGGER.info('Специальный выпуск отложен: после предыдущей публикации ещё не прошёл час')
+            return stats
 
         if args.weekly_digest:
             if storage.find_exact(normalize_url(weekly_item.url), normalize_title(weekly_item.title)):
@@ -760,7 +768,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--weekly-digest", action="store_true", help="Summarize the previous seven days")
     parser.add_argument("--quote-of-day", action="store_true", help="Select an attributed quote, at most once a day")
     parser.add_argument("--process-editor-messages", action="store_true", help="Handle private editor commands only")
-    parser.add_argument("--scheduled-release", action="store_true", help="Catch up to the ten-post daily plan")
+    parser.add_argument("--scheduled-release", action="store_true", help="Publish at most one current daytime slot, without catch-up bursts")
     parser.add_argument("--max-candidates", type=int, default=40, help="Limit article extraction and rewriting per run")
     parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader', 'translation', 'excuse', 'career'],
                         help='Use at most one evidence-backed author rubric within the daily quota')

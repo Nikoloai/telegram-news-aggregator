@@ -15,7 +15,7 @@ from tests.test_review import FakeTelegram, private_command
 from tests.test_schedule import freeze_moscow_evening
 
 
-NOW = datetime(2026, 10, 13, 17, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 13, 16, 30, tzinfo=timezone.utc)
 ZONE = timezone(timedelta(hours=3))
 TRANSLATION = 'Министр Иван Петров назвал сокращение расходов «повышением эффективности управления».'
 EXCUSE = ('Сервис «Сфера» в России не заработал к сроку.\n'

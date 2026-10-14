@@ -149,6 +149,10 @@ class Storage:
         ).fetchone()
         return int(row["total"])
 
+    def last_publication_at(self) -> datetime | None:
+        row = self.connection.execute('SELECT MAX(published_at) FROM publications').fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
     def recent_published(self, limit: int = 200) -> list[sqlite3.Row]:
         return list(
             self.connection.execute(

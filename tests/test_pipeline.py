@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import main
 from aggregator.models import Article, FeedItem
@@ -55,6 +55,9 @@ def test_weekly_digest_is_idempotent_and_does_not_collect_news(monkeypatch, tmp_
     storage = Storage(path)
     storage.save(FeedItem("Test", "Госдума России приняла закон", "https://example.org/old"),
                  "PUBLISHED", topics=["state_policy"], telegram_message_id=90)
+    storage.connection.execute('UPDATE publications SET published_at=?',
+                               ((datetime.now(timezone.utc)-timedelta(hours=2)).isoformat(),))
+    storage.connection.commit()
     storage.close()
     telegram = setup_pipeline(monkeypatch, [])
     args = main.parse_args(["--state", str(path), "--weekly-digest"])

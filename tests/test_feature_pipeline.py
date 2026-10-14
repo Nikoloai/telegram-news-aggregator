@@ -16,15 +16,20 @@ def tariff(index=1):
 
 
 def test_feature_is_inside_ten_messages_and_used_once_per_day(monkeypatch, tmp_path):
-    freeze_moscow_evening(monkeypatch, NOW)
+    now = NOW-timedelta(hours=4)
+    freeze_moscow_evening(monkeypatch, now)
     items = [tariff(), FeedItem('Test', 'В Москве увеличили плату за парковку', 'https://example.org/parking',
                                'В Москве плата выросла с 50 до 80 рублей.', NOW)]
+    for item in items:
+        item.published_at = now
     telegram = setup_pipeline(monkeypatch, items)
     args = main.parse_args(['--state', str(tmp_path/'state.db'), '--scheduled-release'])
     first = main.run(args)
     second = main.run(args)
+    freeze_moscow_evening(monkeypatch, now+timedelta(hours=2))
+    third = main.run(args)
     public = [text for chat, text in telegram.messages if chat == '@channel']
-    assert first.sent == 2 and second.sent == 0
+    assert first.sent == 1 and second.sent == 0 and third.sent == 1
     assert sum('Цена решения' in text for text in public) == 1
     assert '240 руб.' in public[0]
     assert 'Предложить материал' in public[0]

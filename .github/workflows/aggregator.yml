@@ -106,7 +106,7 @@ jobs:
             esac
           fi
           case "$mode" in
-            auto|scheduled) args+=(--scheduled-release --max-items 10) ;;
+            auto|scheduled) args+=(--scheduled-release --max-items 1) ;;
             weekly) args+=(--weekly-digest) ;;
             emergency) args+=(--emergency-only --max-items 1) ;;
             digest) args+=(--digest --max-items 2) ;;
