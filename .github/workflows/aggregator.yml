@@ -1,6 +1,9 @@
 name: News aggregator
 
 on:
+  push:
+    branches: [main]
+    paths: ['content/longreads/**']
   workflow_dispatch:
     inputs:
       dry_run:
@@ -12,7 +15,7 @@ on:
         description: "Choose a release or editor commands"
         type: choice
         default: auto
-        options: [auto, scheduled, news, digest, quote, emergency, weekly, editor, editorial]
+        options: [auto, scheduled, news, digest, quote, emergency, weekly, editor, editorial, longread]
   schedule:
     - cron: "17,47 * * * *"
     - cron: "32 18 * * 0"
@@ -70,9 +73,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p data
-          git fetch origin state || true
+          git fetch origin state
           if git rev-parse --verify origin/state >/dev/null 2>&1; then
-            git show origin/state:data/state.db > data/state.db || true
+            git show origin/state:data/state.db > /tmp/restored-news-state.db
+            cp /tmp/restored-news-state.db data/state.db
           fi
 
       - uses: actions/setup-python@v7
@@ -89,7 +93,20 @@ jobs:
       - name: Verify Telegram bot access
         run: python -m scripts.check_telegram_access
 
+      - name: Publish one approved longread
+        id: longreads
+        continue-on-error: true
+        if: env.DRY_RUN != 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || inputs.run_mode == 'longread')
+        shell: bash
+        run: |
+          args=(--live)
+          if [[ "${{ github.event_name }}" == "push" || "$RUN_MODE" == "longread" ]]; then
+            args+=(--immediate)
+          fi
+          python -m scripts.publish_longread "${args[@]}"
+
       - name: Aggregate
+        if: github.event_name != 'push' && env.LONGREAD_PUBLISHED != 'true' && inputs.run_mode != 'longread'
         shell: bash
         run: |
           if [[ "$DRY_RUN" == "true" ]]; then
@@ -117,7 +134,7 @@ jobs:
           python main.py "${args[@]}"
 
       - name: Persist state branch
-        if: success() && env.DRY_RUN != 'true'
+        if: always() && env.DRY_RUN != 'true' && (success() || steps.longreads.outcome == 'failure')
         shell: bash
         run: |
           cp data/state.db /tmp/telegram-news-state.db

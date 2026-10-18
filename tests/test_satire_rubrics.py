@@ -199,6 +199,7 @@ def test_send_failure_does_not_consume_weekly_budget(monkeypatch, tmp_path):
 
 def test_private_approval_respects_weekly_limit(monkeypatch, tmp_path):
     freeze_moscow_evening(monkeypatch, NOW)
+    monkeypatch.setattr('aggregator.review.datetime', main.datetime)
     path = tmp_path/'state.db'
     seed_week(path, ['career', 'translation'])
     storage = Storage(path)
