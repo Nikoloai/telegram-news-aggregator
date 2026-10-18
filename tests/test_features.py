@@ -87,12 +87,34 @@ def test_followup_does_not_match_generic_russia_or_two_different_schools():
     assert followup_match('Игорь Яковенко отправлен в СИЗО', FeedItem('Test', 'Игорь Яковенко обратился в суд', 'x'))
 
 
-def test_no_news_followup_is_clearly_limited_to_observed_feeds():
+def test_no_news_never_produces_a_followup_draft():
     watch = {'title': 'В Самаре обещали открыть школу', 'source': 'Test', 'url': 'https://example.org/old',
              'started_at': (NOW-timedelta(days=9)).isoformat(), 'telegram_message_id': 50}
-    draft = build_followup(watch, None, NOW, '@channel')
-    assert 'Прошло 9 дней' in draft.body
-    assert 'не доказывает, что проблема не решена' in draft.body
+    assert build_followup(watch, None, NOW, '@channel') is None
+
+
+def test_followup_requires_new_content_not_a_new_timestamp_or_headline():
+    watch = {'title': 'В Самаре обещали открыть школу №7', 'source': 'Test', 'url': 'https://example.org/old',
+             'started_at': (NOW-timedelta(days=9)).isoformat(), 'telegram_message_id': 50}
+    old = 'В Самаре пообещали завершить ремонт школы №7 до конца года.'
+    assert build_followup(watch, article('', 'В Самаре сообщили о школе №7'), NOW, '@channel') is None
+    assert build_followup(watch, article(old, watch['title']), NOW, '@channel') is None
+    assert build_followup(watch, article(old, 'В Самаре напомнили о ремонте школы №7'), NOW, '@channel', old) is None
+    unchanged = article('По школе №7 новых сведений нет, ситуация остаётся без изменений.',
+                        'В Самаре школа №7 остаётся без изменений')
+    assert build_followup(watch, unchanged, NOW, '@channel') is None
+
+
+def test_real_followup_leads_with_new_detail_and_keeps_both_source_links():
+    watch = {'title': 'В Самаре обещали открыть школу №7', 'source': 'Earlier', 'url': 'https://example.org/old',
+             'started_at': (NOW-timedelta(days=9)).isoformat(), 'telegram_message_id': 50}
+    old = 'В Самаре пообещали завершить ремонт школы №7 до конца года.'
+    new = 'В Самаре школу №7 открыли после завершения ремонта.'
+    current = article(old+'\n'+new, 'В Самаре школу №7 открыли после ремонта')
+    draft = build_followup(watch, current, NOW, '@channel', old)
+    assert draft and new in draft.body and old not in draft.body
+    assert draft.body.startswith('Новое сообщение') and 'Прошло 9 дней' not in draft.body
+    assert ('Earlier', watch['url']) in draft.extra_sources
     assert ('Первый выпуск', 'https://t.me/channel/50') in draft.extra_sources
 
 

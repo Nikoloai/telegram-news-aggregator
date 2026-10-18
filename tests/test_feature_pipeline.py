@@ -98,7 +98,7 @@ def seed_watch(path, now):
     storage.close()
 
 
-def test_no_update_followup_is_once_and_not_issued_for_empty_collection(monkeypatch, tmp_path):
+def test_no_update_followup_is_silent_and_leaves_the_slot_for_ordinary_news(monkeypatch, tmp_path):
     freeze_moscow_evening(monkeypatch, NOW)
     path = tmp_path/'state.db'
     seed_watch(path, NOW)
@@ -107,12 +107,13 @@ def test_no_update_followup_is_once_and_not_issued_for_empty_collection(monkeypa
     assert main.run(args).sent == 0
     monkeypatch.setattr(main.FeedCollector, 'collect_all', lambda *args: [tariff()])
     assert main.run(args).sent == 1
-    assert main.run(args).sent == 1  # Ordinary, unrelated news can still fill the quota.
+    assert main.run(args).sent == 0
     public = [text for chat, text in telegram.messages if chat == '@channel']
-    assert sum('Не забыли' in text for text in public) == 1
-    assert 'не доказывает, что проблема не решена' in public[0]
+    assert len(public) == 1 and 'Не забыли' not in public[0]
+    assert 'не доказывает, что проблема не решена' not in public[0]
     storage = Storage(path)
     assert not storage.due_watches(NOW)
+    assert storage.feature_count_between(*main.publication_day_window('Europe/Moscow', NOW)) == 0
     storage.close()
 
 
@@ -120,7 +121,9 @@ def test_followup_send_failure_does_not_advance_checkpoint(monkeypatch, tmp_path
     freeze_moscow_evening(monkeypatch, NOW)
     path = tmp_path/'state.db'
     seed_watch(path, NOW)
-    telegram = setup_pipeline(monkeypatch, [tariff()])
+    update = FeedItem('Test', 'В Самаре школу №7 открыли после ремонта', 'https://example.org/opened',
+                      'В Самаре школу №7 открыли после завершения ремонта.', NOW)
+    telegram = setup_pipeline(monkeypatch, [update])
     telegram.send = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('Test failure'))
     main.run(main.parse_args(['--state', str(path), '--author-feature', 'followup', '--max-items', '1']))
     storage = Storage(path)
@@ -219,3 +222,48 @@ def test_followup_with_new_news_counts_one_message_and_marks_both_article_record
     assert not storage.due_watches(NOW)
     assert storage.find_exact(item.url, '')
     storage.close()
+
+
+def test_followup_does_not_repeat_an_update_already_published_elsewhere_in_the_channel(monkeypatch, tmp_path):
+    freeze_moscow_evening(monkeypatch, NOW)
+    path = tmp_path/'state.db'
+    seed_watch(path, NOW)
+    item = FeedItem('Test', 'В Самаре школу №7 открыли после ремонта', 'https://example.org/opened',
+                    'В Самаре школу №7 открыли после завершения ремонта.', NOW)
+    storage = Storage(path)
+    storage.save(item, 'PUBLISHED', item.description, telegram_message_id=51)
+    storage.close()
+    telegram = setup_pipeline(monkeypatch, [item])
+    result = main.run(main.parse_args(['--state', str(path), '--author-feature', 'followup', '--max-items', '1']))
+    assert result.sent == 0 and result.previews == 0 and not telegram.messages
+
+
+def test_real_followup_uses_new_article_for_link_preview(monkeypatch, tmp_path):
+    freeze_moscow_evening(monkeypatch, NOW)
+    path = tmp_path/'state.db'
+    seed_watch(path, NOW)
+    item = FeedItem('Test', 'В Самаре школу №7 открыли после ремонта', 'https://example.org/opened',
+                    'В Самаре школу №7 открыли после завершения ремонта.', NOW)
+    telegram = setup_pipeline(monkeypatch, [item])
+    previews = []
+    send = telegram.send
+    def capture(chat, text, preview_url=None):
+        if chat == '@channel':
+            previews.append(preview_url)
+        return send(chat, text, preview_url)
+    telegram.send = capture
+    assert main.run(main.parse_args(['--state', str(path), '--author-feature', 'followup'])).sent == 1
+    assert previews == [item.url]
+
+
+def test_quiet_followup_dry_run_does_not_advance_internal_checkpoints(monkeypatch, tmp_path, capsys):
+    freeze_moscow_evening(monkeypatch, NOW)
+    path = tmp_path/'state.db'
+    seed_watch(path, NOW)
+    telegram = setup_pipeline(monkeypatch, [tariff()])
+    main.run(main.parse_args(['--state', str(path), '--author-feature', 'followup', '--dry-run']))
+    storage = Storage(path)
+    assert storage.due_watches(NOW)[0]['checkpoint'] == 7
+    assert storage.feature_count_between(*main.publication_day_window('Europe/Moscow', NOW)) == 0
+    storage.close()
+    assert 'Не забыли' not in capsys.readouterr().out and not telegram.messages

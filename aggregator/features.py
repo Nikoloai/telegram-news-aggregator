@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from .article import clean_html
+from .dedupe import normalize_title
 from .models import Article, FeedItem
 
 FEATURE_RUBRICS = ("responsibility", "followup", "contrast", "cost", "reader", "translation", "excuse", "career")
@@ -219,20 +220,23 @@ def followup_match(original_title: str, candidate: FeedItem) -> bool:
 
 
 def build_followup(watch: Mapping[str, object], current: Article | None,
-                   now: datetime, channel: str) -> FeatureDraft:
+                   now: datetime, channel: str, previous_text: str = '') -> FeatureDraft | None:
+    if current is None or normalize_title(current.item.title) == normalize_title(str(watch['title'])):
+        return None
+    old = normalize_title(previous_text)
+    detail = next((part for part in sentences(current.text)
+                   if not old or normalize_title(part) not in old), None)
+    if not detail:
+        return None
+    if re.search(r'ничего не произошло|без изменений|новостей нет|новых (?:сведений|данных|сообщений) нет|'
+                 r'обновлений нет|новых .*не появил', current.item.title + ' ' + detail, re.I):
+        return None
     first = datetime.fromisoformat(str(watch["started_at"]))
-    age = max(0, (now - first).days)
-    body = f"История из выпуска {first:%d.%m.%Y}: {watch['title']}\n\nПрошло {age} дней.\n\n"
-    sources = [(str(watch["source"]), str(watch["url"]))]
-    if current:
-        body += f"Новое сообщение ({current.item.source}): {clean_html(current.item.title)}"
-        detail = next(iter(sentences(current.text)), None)
-        if detail:
-            body += "\n\nИз нового материала: " + detail
-        sources.append((current.item.source, current.item.canonical_url or current.item.url))
-    else:
-        body += ("В доступных лентах, просмотренных в этом запуске, новых связанных сообщений за последние 48 часов "
-                 "не нашли. Это не означает, что ничего не произошло, и не доказывает, что проблема не решена.")
+    body = (f"Новое сообщение ({current.item.source}): {clean_html(current.item.title)}"
+            f"\n\nИз нового материала: {detail}"
+            f"\n\nРанее, в выпуске {first:%d.%m.%Y}: {watch['title']}")
+    sources = [(str(watch['source']), str(watch['url'])),
+               (current.item.source, current.item.canonical_url or current.item.url)]
     message_id = watch["telegram_message_id"]
     if channel.startswith("@") and message_id:
         sources.append(("Первый выпуск", f"https://t.me/{channel[1:]}/{message_id}"))

@@ -153,7 +153,7 @@ def emit_preview(item_source: str, title: str, mode: str, topics: list[str], dup
 def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFetcher,
                      telegram: TelegramClient | None, args: argparse.Namespace, channel: str,
                      destination: str, review_mode: bool, now: datetime, privacy_key: str) -> tuple[int, int]:
-    """One checkpoint message, not a resend of an old article as today's news."""
+    """Publish a new development, never a calendar checkpoint with no news."""
     fresh = [item for item in items if item.published_at and
              now - timedelta(hours=48) <= item.published_at <= now + timedelta(minutes=15)]
     if not fresh:
@@ -163,20 +163,32 @@ def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFe
         return 0, 0  # Breaking news must not be delayed by a retrospective.
     for watch in storage.due_watches(now):
         identity = f"https://t.me/{channel.lstrip('@')}?watch={watch['id']}&checkpoint={watch['checkpoint']}"
-        title = f"Возвращаемся к истории: {watch['title']} (проверка {watch['checkpoint']})"
-        if storage.find_exact(normalize_url(identity), normalize_title(title)):
+        if storage.find_exact(normalize_url(identity), ''):
             continue
         matching = next((item for item in fresh if followup_match(str(watch['title']), item)
-                         and item.published_at > datetime.fromisoformat(watch['started_at'])), None)
+                         and item.published_at > datetime.fromisoformat(watch['started_at'])
+                         and not storage.find_exact(normalize_url(item.canonical_url or item.url),
+                                                    normalize_title(item.title))), None)
         current = fetcher.fetch(matching) if matching else None
         if matching:
+            if storage.find_exact(normalize_url(current.item.canonical_url or current.item.url), ''):
+                if not args.dry_run:
+                    storage.finish_watch_checkpoint(int(watch['id']))
+                continue
             evidence = source_evidence(matching, fresh)
             reasons = review_reasons(f"{matching.title}\n{current.text}", current.text,
                                      RewriteMode.HARD_NEWS, evidence.conflicts, [])
             if reasons:
                 continue  # No amplification of a disputed update via the author rubric.
-        draft = build_followup(watch, current, now, channel)
-        post = format_post(draft.body, str(watch['source']), str(watch['url']), max_chars=2200,
+        previous = storage.find_by_normalized_url(normalize_url(str(watch['url'])))
+        draft = build_followup(watch, current, now, channel, str(previous['content'] or '') if previous else '')
+        if draft is None:
+            if not args.dry_run:
+                storage.finish_watch_checkpoint(int(watch['id']))  # Internal check only; no post/quota.
+            continue
+        title = f"Обновление истории: {current.item.title}"
+        current_url = current.item.canonical_url or current.item.url
+        post = format_post(draft.body, current.item.source, current_url, max_chars=2200,
                            feature_title=FEATURE_LABELS['followup'], extra_sources=draft.extra_sources,
                            reader_request_url=reader_bot_url())
         item = FeedItem('Редакция', title, identity, published_at=now)
@@ -186,7 +198,7 @@ def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFe
         if not telegram or not destination:
             return 0, 1
         try:
-            message_id = telegram.send(destination, post, preview_url=str(watch['url']))
+            message_id = telegram.send(destination, post, preview_url=current_url)
         except Exception as exc:
             LOGGER.warning('Отправка проверки истории не удалась: %s', type(exc).__name__)
             return 0, 1
