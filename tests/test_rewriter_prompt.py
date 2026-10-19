@@ -1,4 +1,4 @@
-from rewriter.llm import SYSTEM_PROMPT, HARD_SATIRE_PROMPT, LLMRewriter
+from rewriter.llm import SYSTEM_PROMPT, HARD_SATIRE_PROMPT, AUTHOR_VOICE_PROMPT, LLMRewriter
 from aggregator.models import Article, FeedItem
 from aggregator.modes import RewriteMode
 from aggregator.features import FeatureDraft
@@ -53,9 +53,18 @@ def test_strengthened_profile_is_sent_only_for_satire_and_keeps_same_writer(monk
     assert len(requests) == 5  # One existing author request per text; no additional editor.
     for mode, request in zip(RewriteMode, requests[:4]):
         system = request['json']['messages'][0]['content']
+        assert AUTHOR_VOICE_PROMPT in system
         assert (HARD_SATIRE_PROMPT in system) == (mode == RewriteMode.SATIRICAL)
         assert request['json']['temperature'] == (0.4 if mode == RewriteMode.SATIRICAL else 0.2)
     last = requests[-1]['json']['messages']
     assert HARD_SATIRE_PROMPT in last[0]['content']
     assert 'один абзац на 60–320' in last[0]['content']
     assert 'беспощадную концовку' in last[1]['content']
+
+
+def test_author_voice_avoids_formula_without_fabricating_human_experience():
+    for requirement in ('одну мысль', 'Не объясняй читателю', 'риторическими вопросами',
+                        'не выдумывай личный опыт', 'Не изображай очевидца',
+                        'Не добавляй ошибки', 'атрибуция', 'Для HARD_NEWS'):
+        assert requirement in AUTHOR_VOICE_PROMPT
+    assert '2–4 абзаца по смыслу' in SYSTEM_PROMPT

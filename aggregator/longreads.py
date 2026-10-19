@@ -19,6 +19,7 @@ import requests
 from cryptography.fernet import Fernet
 
 from .models import FeedItem
+from .dedupe import normalize_title
 from .schedule import spacing_ready
 from .storage import Storage
 
@@ -77,6 +78,9 @@ def load_queue(root: Path) -> list[dict]:
         if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', slug) or slug in slugs:
             raise ValueError('Invalid or duplicate longread slug')
         slugs.add(slug)
+        revision = item.get('revision', 1)
+        if type(revision) is not int or revision < 1:
+            raise ValueError('Revision must be a positive integer')
         for field in ('article', 'announcement'):
             path = (root / item[field]).resolve()
             if root.resolve() not in path.parents or not path.is_file():
@@ -122,9 +126,14 @@ def safe_post(url: str, payload: dict) -> dict:
     try:
         kwargs = {'data': payload} if url.startswith('https://api.telegra.ph/') else {'json': payload}
         response = requests.post(url, **kwargs, timeout=40)
+        data = response.json()
+        # Repeating an edit after an uncertain response is safe: never resend a post.
+        if (url.startswith('https://api.telegram.org/bot') and url.endswith('/editMessageText')
+                and response.status_code == 400 and data.get('error_code') == 400
+                and str(data.get('description', '')).startswith('Bad Request: message is not modified')):
+            return {'message_id': int(payload['message_id'])}
         if response.status_code != 200:
             raise RemoteError(f'Remote HTTP {response.status_code}')
-        data = response.json()
         if not data.get('ok') or not isinstance(data.get('result'), dict):
             raise RemoteError('Remote API rejected the request')
         return data['result']
@@ -190,10 +199,55 @@ class LongreadPublisher:
             'link_preview_options': {'is_disabled': False, 'url': stored['url']}})
         message_id = int(sent['message_id'])
         # Publish receipt first; a crash must never resend an accepted announcement.
-        stored.update(status='published', message_id=message_id, published_at=now.isoformat())
+        stored.update(status='published', message_id=message_id, published_at=now.isoformat(),
+                      revision=item.get('revision', 1))
         self.storage.set_meta(key, json.dumps(stored, ensure_ascii=False))
         self.record_publication(stored, article, post, now)
         return stored
+
+    def refresh(self, item: dict, root: Path, now: datetime) -> dict:
+        """Explicit revision only; edit the recorded page/message, never create or resend."""
+        key = 'longread:' + item['slug']
+        stored = json.loads(self.storage.get_meta(key) or '{}')
+        if item.get('approved') is not True or stored.get('status') != 'published':
+            raise ValueError('Only approved, already published longreads can be edited')
+        if item.get('revision', 1) <= stored.get('revision', 1):
+            return stored
+        if (not self.storage.get_meta('longreads:telegraph:encrypted_token')
+                or not stored.get('path') or not stored.get('message_id')):
+            raise RemoteError('Existing publication credentials and targets required for edit')
+        title, content = render_article((root / item['article']).read_text(encoding='utf-8'))
+        article = (root / item['article']).read_text(encoding='utf-8')
+        teaser = (root / item['announcement']).read_text(encoding='utf-8')
+        post = announcement_html(title, teaser, stored['url'])
+        if len(post) > 4000 or urlsplit(stored['url']).path.lstrip('/') != stored['path']:
+            raise ValueError('Invalid existing publication target or announcement')
+        page = safe_post('https://api.telegra.ph/editPage', {
+            'access_token': self.account_token(), 'path': stored['path'], 'title': title,
+            'content': json.dumps(content, ensure_ascii=False),
+            'author_name': 'Гвоздика · По документам', 'author_url': 'https://t.me/GVOZDIchKAAA',
+            'return_content': 'false'})
+        if page.get('path') != stored['path']:
+            raise RemoteError('Edited page target mismatch')
+        edited = safe_post(f'https://api.telegram.org/bot{self.bot_token}/editMessageText', {
+            'chat_id': self.channel, 'message_id': int(stored['message_id']),
+            'text': post, 'parse_mode': 'HTML',
+            'link_preview_options': {'is_disabled': False, 'url': stored['url']}})
+        if int(edited.get('message_id', 0)) != int(stored['message_id']):
+            raise RemoteError('Edited message target mismatch')
+        # Remote edits are idempotent. A crash before this transaction just repeats the edits.
+        stored.update(title=title, revision=item['revision'], refreshed_at=now.isoformat(),
+                      content_sha256=hashlib.sha256(article.encode()).hexdigest(),
+                      post_sha256=hashlib.sha256(post.encode()).hexdigest())
+        with self.storage.connection:
+            self.storage.connection.execute(
+                'UPDATE articles SET title=?, normalized_title=?, content=?, content_hash=?, post_html=? '
+                'WHERE telegram_message_id=? AND url=? AND status=?',
+                (title, normalize_title(title), article, stored['content_sha256'], post,
+                 int(stored['message_id']), stored['url'], 'PUBLISHED'))
+            self.storage.connection.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)',
+                                            (key, json.dumps(stored, ensure_ascii=False)))
+        return dict(stored, status='updated')
 
     def record_publication(self, receipt: dict, article: str = '', post: str = '', now: datetime | None = None) -> None:
         stamp = datetime.fromisoformat(receipt['published_at'])
@@ -219,6 +273,10 @@ def publish_due(root: Path, storage: Storage, publisher: LongreadPublisher | Non
                 if publisher is None:
                     raise RemoteError('Published receipt needs counter reconciliation before preview')
                 publisher.record_publication(receipt)
+            if item.get('approved') is True and item.get('revision', 1) > receipt.get('revision', 1):
+                if publisher is None:
+                    return {'status': 'preview-update', 'slug': item['slug'], 'title': item['_title']}
+                return publisher.refresh(item, root, now)
     local = now.astimezone(moscow_zone())
     start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     if storage.count_published_between(start, start + timedelta(days=1)) >= daily_limit:

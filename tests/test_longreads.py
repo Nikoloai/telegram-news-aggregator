@@ -145,3 +145,118 @@ def test_actual_approved_manuscripts_are_valid_and_under_telegraph_limit():
     bucha = items[1]
     assert not eligible(bucha, datetime(2026, 10, 20, 15, tzinfo=timezone.utc), True)
     assert eligible(bucha, NOW)
+
+
+def request_revision(root, item, revision=2):
+    item['revision'] = revision
+    (root / 'queue.json').write_text(json.dumps([item]), encoding='utf-8')
+    (root / 'text.md').write_text('# Новый заголовок\n\nНовая редакция с сохранёнными фактами.', encoding='utf-8')
+
+
+def test_revision_edits_same_targets_without_new_post_or_quota(queue, storage, monkeypatch):
+    root, item = queue
+    fake_remote(monkeypatch)
+    publisher = LongreadPublisher(storage, 'test-bot-secret', '@GVOZDIchKAAA')
+    original = publish_due(root, storage, publisher, NOW)
+    counters = list(storage.connection.execute('SELECT * FROM publications').fetchall())
+    last = storage.last_publication_at()
+    request_revision(root, item)
+    calls = []
+    def edit(url, payload):
+        calls.append((url, payload))
+        assert 'create' not in url and 'sendMessage' not in url
+        return {'path': original['path']} if url.endswith('editPage') else {'message_id': 812}
+    monkeypatch.setattr('aggregator.longreads.safe_post', edit)
+    # A text edit is not a publication and does not consume even a full daily quota.
+    result = publish_due(root, storage, publisher, NOW + timedelta(minutes=1), daily_limit=1)
+    assert result['status'] == 'updated'
+    assert result['url'] == original['url'] and result['message_id'] == 812
+    assert result['published_at'] == original['published_at']
+    assert calls[0][1]['path'] == original['path']
+    assert calls[1][1]['message_id'] == 812
+    assert calls[1][1]['chat_id'] == '@GVOZDIchKAAA'
+    assert list(storage.connection.execute('SELECT * FROM publications').fetchall()) == counters
+    assert storage.last_publication_at() == last
+    stored = json.loads(storage.get_meta('longread:sample'))
+    assert stored['status'] == 'published' and stored['revision'] == 2
+    row = storage.connection.execute('SELECT title, content FROM articles WHERE telegram_message_id=812').fetchone()
+    assert row['title'] == 'Новый заголовок' and 'Новая редакция' in row['content']
+    assert publish_due(root, storage, publisher, NOW + timedelta(hours=1)) is None
+    assert len(calls) == 2
+
+
+def test_edit_preview_and_unapproved_revision_do_not_mutate(queue, storage, monkeypatch):
+    root, item = queue
+    fake_remote(monkeypatch)
+    publisher = LongreadPublisher(storage, 'test-bot-secret', '@GVOZDIchKAAA')
+    publish_due(root, storage, publisher, NOW)
+    request_revision(root, item)
+    before = storage.get_meta('longread:sample')
+    monkeypatch.setattr('aggregator.longreads.safe_post', lambda *_: pytest.fail('Preview must not write'))
+    assert publish_due(root, storage, None, NOW)['status'] == 'preview-update'
+    assert storage.get_meta('longread:sample') == before
+    item['approved'] = False
+    (root / 'queue.json').write_text(json.dumps([item]), encoding='utf-8')
+    assert publish_due(root, storage, publisher, NOW) is None
+    with pytest.raises(ValueError):
+        publisher.refresh(item, root, NOW)
+
+
+def test_uncertain_edit_can_retry_without_resending(queue, storage, monkeypatch):
+    root, item = queue
+    fake_remote(monkeypatch)
+    publisher = LongreadPublisher(storage, 'test-bot-secret', '@GVOZDIchKAAA')
+    publish_due(root, storage, publisher, NOW)
+    request_revision(root, item)
+    failed = True
+    calls = []
+    def edit(url, payload):
+        nonlocal failed
+        calls.append(url)
+        assert url.endswith(('editPage', 'editMessageText'))
+        if url.endswith('editPage'):
+            return {'path': 'Article-10-21'}
+        if failed:
+            failed = False
+            raise RemoteError('Uncertain edit response')
+        return {'message_id': 812}
+    monkeypatch.setattr('aggregator.longreads.safe_post', edit)
+    with pytest.raises(RemoteError):
+        publish_due(root, storage, publisher, NOW)
+    assert json.loads(storage.get_meta('longread:sample'))['status'] == 'published'
+    assert publish_due(root, storage, publisher, NOW)['status'] == 'updated'
+    assert len(calls) == 4
+    assert storage.connection.execute('SELECT COUNT(*) FROM publications').fetchone()[0] == 1
+
+
+def test_refresh_never_creates_missing_publication_or_account(queue, storage, monkeypatch):
+    root, item = queue
+    calls = fake_remote(monkeypatch)
+    publisher = LongreadPublisher(storage, 'test-bot-secret', '@GVOZDIchKAAA')
+    item['revision'] = 2
+    with pytest.raises(ValueError):
+        publisher.refresh(item, root, NOW)
+    assert calls == []
+
+
+@pytest.mark.parametrize('revision', [0, -1, True, '2', 1.5])
+def test_queue_rejects_invalid_revision(queue, revision):
+    root, item = queue
+    request_revision(root, item, revision)
+    with pytest.raises(ValueError):
+        load_queue(root)
+
+
+def test_repeated_telegram_edit_is_success_but_other_errors_are_not(monkeypatch):
+    from aggregator.longreads import safe_post
+    class Response:
+        status_code = 400
+        def json(self):
+            return {'ok': False, 'error_code': 400,
+                    'description': 'Bad Request: message is not modified: specified new message content is the same'}
+    monkeypatch.setattr('aggregator.longreads.requests.post', lambda *a, **kw: Response())
+    assert safe_post('https://api.telegram.org/botTEST/editMessageText', {'message_id': 812}) == {'message_id': 812}
+    with pytest.raises(RemoteError):
+        safe_post('https://api.telegram.org/botTEST/sendMessage', {'message_id': 812})
+    with pytest.raises(RemoteError):
+        safe_post('https://api.telegra.ph/editPage', {'message_id': 812})
