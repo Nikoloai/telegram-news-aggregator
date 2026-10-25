@@ -15,5 +15,13 @@
     "publish_at": "2026-10-21T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "family-mortgage-2026-10",
+    "article": "03-family-mortgage.md",
+    "announcement": "03-family-mortgage-teaser.txt",
+    "publish_at": "2026-10-28T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
