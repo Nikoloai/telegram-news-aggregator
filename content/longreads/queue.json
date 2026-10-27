@@ -23,5 +23,13 @@
     "publish_at": "2026-10-28T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "un-ukraine-energy-cnn-2026-10-26",
+    "article": "04-un-ukraine-energy-2026-10-26.md",
+    "announcement": "04-un-ukraine-energy-2026-10-26-teaser.txt",
+    "publish_at": "2026-10-27T20:00:00+03:00",
+    "approved": true,
+    "publish_immediately": true
   }
 ]
