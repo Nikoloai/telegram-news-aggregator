@@ -31,5 +31,13 @@
     "publish_at": "2026-10-27T20:00:00+03:00",
     "approved": true,
     "publish_immediately": true
+  },
+  {
+    "slug": "sj100-deadlines-2026-11",
+    "article": "05-sj100-deadlines.md",
+    "announcement": "05-sj100-deadlines-teaser.txt",
+    "publish_at": "2026-11-01T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
