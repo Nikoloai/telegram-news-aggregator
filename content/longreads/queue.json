@@ -47,5 +47,13 @@
     "publish_at": "2026-11-04T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "waste-after-sorting-2026-11",
+    "article": "07-waste-after-sorting.md",
+    "announcement": "07-waste-after-sorting-teaser.txt",
+    "publish_at": "2026-11-08T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
