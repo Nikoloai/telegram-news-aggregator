@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -100,6 +101,8 @@ class PageMonitor:
         candidates = {}
         for row in history:
             url = str(row['canonical_url'] or row['url'])
+            if urlsplit(url).hostname == 't.me':
+                continue
             allowed = source_url(url, sources)
             if (not allowed or allowed[0] != normalize_url(url) or row['updated_at'] < cutoff
                     or row['rubric'] in {'longread', 'changes', 'correction', 'weekly'}

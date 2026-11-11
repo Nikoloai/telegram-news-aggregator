@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from html import unescape
+from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -28,6 +29,9 @@ class ArticleFetcher:
 
     def fetch(self, item: FeedItem) -> Article:
         fallback = clean_html(item.description)
+        if (urlsplit(item.url).hostname == 't.me' and fallback
+                and re.fullmatch(r'/[A-Za-z0-9_]{5,32}/\d+', urlsplit(item.url).path)):
+            return Article(item=item, text=fallback[:self.max_chars])
         page_verified = False
         page_title = ''
         page_text = ''

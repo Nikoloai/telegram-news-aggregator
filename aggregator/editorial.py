@@ -8,6 +8,7 @@ from enum import StrEnum
 from .article import clean_html
 from .corroboration import stories_match
 from .models import FeedItem
+from .filters import TopicFilter, kaliningrad_context
 from .modes import RewriteMode, classify_mode, requires_serious_tone
 
 
@@ -174,6 +175,9 @@ def rank_news(
 ) -> list[FeedItem]:
     now = now_utc or datetime.now(timezone.utc)
     recent = list(recent_rows)[:6]
+    regional_recent = any(kaliningrad_context(str(row['title']))
+                          or ('topics' in row.keys() and 'kaliningrad' in str(row['topics']).split(','))
+                          for row in recent[:2])
     preferences = ({RewriteMode.HARD_NEWS}, {RewriteMode.ANALYSIS},
                    {RewriteMode.IRONIC, RewriteMode.SATIRICAL}, {RewriteMode.ANALYSIS})
     preferred = preferences[slot % 4]
@@ -186,13 +190,16 @@ def rank_news(
         (r"награ|знак|пропаганд|импортозамещ", 3),
     )
 
-    def score(item: FeedItem) -> float:
+    def score(item: FeedItem) -> tuple[bool, float]:
         primary = clean_html(item.title).lower()
+        topics = TopicFilter().match(item).topics
         importance = max((weight for pattern, weight in weights if re.search(pattern, primary)), default=2)
+        if 'kaliningrad' in topics and not regional_recent:
+            importance += 4
         age = max(0, (now - item.published_at).total_seconds() / 3600) if item.published_at else 48
         repetition = sum(stories_match(item.title, str(row["title"])) for row in recent)
         varied = 1 if classify_mode(item.title, clean_html(item.description)) in preferred else 0
-        return importance + max(0, 4 - age / 6) + varied - repetition * 8
+        return is_emergency(item, topics, now), importance + max(0, 4 - age / 6) + varied - repetition * 8
 
     fresh = [item for item in items if not item.published_at or
              now - timedelta(hours=max_age_hours) <= item.published_at <= now + timedelta(minutes=15)]

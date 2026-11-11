@@ -172,6 +172,8 @@ def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFe
                                                     normalize_title(item.title))), None)
         current = fetcher.fetch(matching) if matching else None
         if matching:
+            if 'editorial_review' in matching.categories:
+                continue
             if storage.find_exact(normalize_url(current.item.canonical_url or current.item.url), ''):
                 if not args.dry_run:
                     storage.finish_watch_checkpoint(int(watch['id']))
@@ -445,7 +447,7 @@ def run(args: argparse.Namespace) -> RunStats:
             if fingerprint in requests and source_url(item.url, sources):
                 storage.index_reader_url(fingerprint, item.url)
         # Suggestions influence selection ONLY if the public URL is independently in a
-        # connected current RSS feed. Never fetch a URL supplied by a private message.
+        # connected current public feed. Never fetch a URL supplied by a private message.
         if feature_window and (args.scheduled_release or args.author_feature):
             items.sort(key=lambda item: (not is_emergency(item, topic_filter.match(item).topics),
                                         request_key(token, item.url) not in requests))
@@ -697,7 +699,10 @@ def run(args: argparse.Namespace) -> RunStats:
             review_body = body + ('\n\n' + author_commentary if author_commentary else '')
             reasons = review_reasons(validation_source, review_body, mode, evidence.conflicts, validation.warnings)
             reasons.extend(rewrite_warnings)
-            if reasons and env_bool("REVIEW_UNCERTAIN", True):
+            source_review = 'editorial_review' in item.categories
+            if source_review:
+                reasons.append('Авторский источник: проверить документы и атрибуцию обвинений перед публикацией')
+            if reasons and (env_bool("REVIEW_UNCERTAIN", True) or source_review):
                 LOGGER.info("Материал удержан для редактора: %s", "; ".join(reasons))
                 if not args.dry_run and held_for_review < 3:
                     storage.enqueue_review(item, post, validation_source, mode.value, topic_match.topics,

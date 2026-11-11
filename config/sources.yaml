@@ -28,3 +28,28 @@ sources:
     homepage: https://theins.ru/
     enabled: true
     max_items: 30
+
+  - name: Новый Калининград
+    type: telegram
+    feed_url: https://t.me/s/newkal_stream
+    homepage: https://www.newkaliningrad.ru/
+    region: kaliningrad
+    enabled: true
+    max_items: 15
+
+  - name: RUGRAD
+    type: telegram
+    feed_url: https://t.me/s/rugrad
+    homepage: https://rugrad.online/
+    region: kaliningrad
+    enabled: true
+    max_items: 15
+
+  - name: Антон Гендриксон
+    type: telegram
+    feed_url: https://t.me/s/gndrksn
+    homepage: https://t.me/gndrksn/
+    region: kaliningrad
+    requires_review: true
+    enabled: true
+    max_items: 10

@@ -94,7 +94,10 @@ class LLMRewriter(Rewriter):
     def rewrite(self, article: Article, mode: RewriteMode) -> str:
         source = article.text or article.item.description
         return self._generate(
-            f"Режим: {mode.value}\nЗаголовок: {article.item.title}\n\nИсходный материал:\n{source[:15000]}", mode,
+            f"Режим: {mode.value}\nИсточник: {article.item.source}\nЗаголовок: {article.item.title}\n"
+            "Чужой рассказ от первого лица передавай с указанием автора. "
+            "Сохраняй, кто выдвигает обвинение и на какие документы ссылается.\n\n"
+            f"Исходный материал:\n{source[:15000]}", mode,
         )
 
     def rewrite_commentary(self, article: Article, draft: object) -> str:

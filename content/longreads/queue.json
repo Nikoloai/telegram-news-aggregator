@@ -64,5 +64,13 @@
     "publish_at": "2026-11-11T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "kaliningrad-zaostrovye-2026-11",
+    "article": "09-kaliningrad-zaostrovye.md",
+    "announcement": "09-kaliningrad-zaostrovye-teaser.txt",
+    "publish_at": "2026-11-15T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]

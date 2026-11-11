@@ -54,6 +54,11 @@ def source_url(text: str, sources: list[dict[str, object]]) -> tuple[str, str] |
                 continue
             host = urlsplit(str(source.get("homepage", ""))).hostname
             if host and parts.hostname.lower().removeprefix("www.") == host.lower().removeprefix("www."):
+                if host.lower() == 't.me':
+                    channel = urlsplit(str(source['homepage'])).path.strip('/')
+                    if not re.fullmatch(r'(?:s/)?' + re.escape(channel) + r'/\d+', parts.path.strip('/'), re.I):
+                        continue
+                    public = urlunsplit(('https', 't.me', '/' + parts.path.removeprefix('/s/').lstrip('/'), '', ''))
                 return normalize_url(public), str(source["name"])
     except ValueError:
         return None

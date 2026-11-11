@@ -49,13 +49,16 @@ ORIGINS = {
     "Росстат": r"росстат",
     "Следственный комитет": r"следственн\w* комитет",
     "Кремль": r"кремл\w*",
+    "Антон Гендриксон": r"гендриксон\w*",
+    "RUGRAD": r"rugrad|руград",
+    "Новый Калининград": r"нов\w* калининград\w*",
 }
 
 
 def attributed_origins(text: str) -> set[str]:
     # Require attribution, rather than treating every mentioned organization as a source.
     value = clean_html(text).lower()
-    attribution = r"(?:по данным|по словам|со ссылкой на|сообщ\w*|заяв\w*|утвержд\w*)"
+    attribution = r"(?:по данным|по словам|со ссылкой на|сообщ\w*|заяв\w*|утвержд\w*|переслано из)"
     return {
         name for name, pattern in ORIGINS.items()
         if re.search(rf"(?:{attribution})[^.!?]{{0,65}}(?:{pattern})|(?:{pattern})[^.!?]{{0,45}}(?:{attribution})", value)
@@ -65,6 +68,8 @@ def attributed_origins(text: str) -> set[str]:
 def source_evidence(item: FeedItem, candidates: list[FeedItem]) -> SourceEvidence:
     sources: list[str] = []
     origins = attributed_origins(f"{item.title} {item.description}")
+    if item.source in ORIGINS:
+        origins.add(item.source)
     shared: set[str] = set()
     conflicts: list[str] = []
     for other in candidates:
@@ -77,7 +82,10 @@ def source_evidence(item: FeedItem, candidates: list[FeedItem]) -> SourceEvidenc
             continue
         if other.source not in sources:
             sources.append(other.source)
-        shared.update(origins & attributed_origins(f"{other.title} {other.description}"))
+        other_origins = attributed_origins(f"{other.title} {other.description}")
+        if other.source in ORIGINS:
+            other_origins.add(other.source)
+        shared.update(origins & other_origins)
         left_numbers = set(re.findall(r"\b\d+\b", item.title))
         right_numbers = set(re.findall(r"\b\d+\b", other.title))
         if left_numbers and right_numbers and left_numbers != right_numbers:

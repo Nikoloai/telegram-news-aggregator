@@ -22,7 +22,8 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
                       "отключен.*(?:свет|вод|тепл|электр)", "крематор"),
     "human_rights": ("прав человека", "пытк", "насили", "правозащит"),
     "state_policy": ("закон", "указ", "госдум", "правительств", "бюджет", "минфин", "чиновник", "ведомств", "минцифр", "минстро",
-                     "администрац", "госзакуп", "муниципаль"),
+                     "администрац", "госзакуп", "муниципаль", "депутат", "губернатор",
+                     "землепольз", "градостро", "госконтракт"),
     "corruption": ("коррупц", "взятк", "расследован", "хищен", "офшор"),
     "propaganda": ("пропаганд", "фейк", "дезинформац", "импортозамещ", "аналогов нет"),
     "politics": ("выбор", "кремл", "президент", "оппозиц", "политическ"),
@@ -47,6 +48,16 @@ def _matches(text: str, patterns: Iterable[str]) -> bool:
     return any(re.search(rf"(?<![а-яёa-z0-9])(?:{pattern})", text, flags=re.IGNORECASE) for pattern in patterns)
 
 
+def kaliningrad_context(text: str) -> bool:
+    return _matches(text, (
+        r'калининград',
+        r'(?:андре[йяю]|андреем|андрее)\s+(?:михайлович\w*\s+)?кропоткин',
+        r'(?:евгени[йяю]|евгением|евгении)\s+(?:владимирович\w*\s+)?верхолаз',
+        r'(?:алексе[йяю]|алексеем|алексее)\s+(?:сергеевич\w*\s+)?беспрозванных',
+        r'антон\w*\s+гендриксон',
+    ))
+
+
 class TopicFilter:
     """Rule-based MVP boundary with a stable interface for a future classifier."""
 
@@ -56,12 +67,16 @@ class TopicFilter:
         ).lower()
         topics = [name for name, words in TOPIC_KEYWORDS.items() if _matches(haystack, words)]
         excluded = [word for word in EXCLUDED_KEYWORDS if word in haystack]
-        russia_related = _matches(haystack, RUSSIA_CONTEXT)
+        regional = kaliningrad_context(haystack)
+        russia_related = _matches(haystack, RUSSIA_CONTEXT) or regional
         # A relevant political/public-interest signal wins over a generic excluded word.
         if not russia_related:
             excluded.append("not_russia_related")
+        accepted = bool(topics) and russia_related and not (excluded and not topics)
+        if accepted and regional:
+            topics.append('kaliningrad')
         return TopicMatch(
-            accepted=bool(topics) and russia_related and not (excluded and not topics),
+            accepted=accepted,
             topics=topics,
             excluded_by=excluded,
         )
