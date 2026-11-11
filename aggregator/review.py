@@ -13,6 +13,8 @@ from .readers import handle_reader_command
 from .features import FEATURE_RUBRICS, valid_cost_body
 from .satire import SATIRE_RUBRICS, satire_week_window
 from .validator import FactPreservationValidator
+from .schedule import spacing_ready
+from .page_changes import PageMonitor, UncertainPageSend
 
 LOGGER = logging.getLogger(__name__)
 
@@ -105,6 +107,11 @@ def process_editor_messages(
                         response = 'Две сатирические рубрики на этой неделе уже опубликованы. Пост остаётся на проверке.'
                     elif row['rubric'] == 'excuse' and storage.rubric_count_between('excuse', week_start, week_end):
                         response = 'Отмазка недели уже опубликована. Пост остаётся на проверке.'
+                    elif row['rubric'] == 'changes' and (
+                        not spacing_ready(datetime.now(timezone.utc), storage.last_publication_at())
+                        or not 8 <= (datetime.now(timezone.utc) + timedelta(hours=3)).hour < 20
+                    ):
+                        response = 'Правка ожидает дневного окна и часовой паузы после предыдущего поста.'
                     elif datetime.fromisoformat(str(row["created_at"])) < datetime.now(timezone.utc) - timedelta(hours=48):
                         response = "Пост устарел: прошло больше 48 часов. Проверь новый материал."
                     elif not row['body_text'] or not (
@@ -113,8 +120,18 @@ def process_editor_messages(
                         else FactPreservationValidator().validate(row['source_text'], row['body_text']).valid
                     ):
                         response = "Проверка фактов не пройдена. Пост не опубликован."
+                    elif row['rubric'] == 'changes' and not PageMonitor(storage).claim(item.url, 'REVIEW_PENDING'):
+                        response = 'Отправка этой правки уже начата или обработана. Нужна сверка с каналом.'
                     else:
-                        message_id = telegram.send(channel, str(row["post_html"]), preview_url=item.canonical_url or item.url)
+                        preview_url = item.canonical_url or item.url
+                        if row['rubric'] == 'changes':
+                            preview_url = item.url.partition('?gvozdika_revision=')[0]
+                        try:
+                            message_id = telegram.send(channel, str(row["post_html"]), preview_url=preview_url)
+                        except Exception as exc:
+                            if row['rubric'] == 'changes':
+                                raise UncertainPageSend(item.url) from exc
+                            raise
                         storage.save(
                             item, "PUBLISHED", row["source_text"], row["mode"], str(row["topics"]).split(","),
                             telegram_message_id=message_id, post_html=str(row["post_html"]), rubric=row["rubric"],

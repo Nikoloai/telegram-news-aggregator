@@ -33,6 +33,7 @@ from aggregator.editorial import (
 from aggregator.filters import TopicFilter
 from aggregator.formatter import format_digest, format_post, format_weekly_digest
 from aggregator.models import FeedItem
+from aggregator.page_changes import PageMonitor, UncertainPageSend
 from aggregator.features import (
     FEATURE_LABELS, FeatureDraft, build_followup, followup_match, select_feature,
 )
@@ -217,6 +218,60 @@ def release_followup(storage: Storage, items: list[FeedItem], fetcher: ArticleFe
     return 0, 0
 
 
+def release_page_change(storage: Storage, items: list[FeedItem], sources: list[dict[str, object]],
+                        fetcher: ArticleFetcher, telegram: TelegramClient | None,
+                        args: argparse.Namespace, channel: str, destination: str,
+                        review_mode: bool, editor_chat_id: str, now: datetime,
+                        zone: ZoneInfo | timezone, allow_release: bool) -> tuple[int, int] | None:
+    """None stops this invocation after an uncertain send, retaining its durable intent."""
+    if not args.dry_run and not regular_release_due(now.astimezone(zone), storage.last_publication_at()):
+        return 0, 0
+    if any(is_emergency(item, TopicFilter().match(item).topics, now)
+           and not storage.find_exact(normalize_url(item.url), normalize_title(item.title)) for item in items):
+        return 0, 0
+    monitor = PageMonitor(storage)
+    if not args.dry_run:
+        monitor.enroll(storage.recent_published(), sources, now)
+        monitor.scan(fetcher, now)
+    if not allow_release:
+        return 0, 0
+    change = monitor.pending(now, reconcile=not args.dry_run)
+    if change is None:
+        return 0, 0
+    validation = FactPreservationValidator().validate(change.evidence, change.body)
+    if not validation.valid:
+        if not args.dry_run:
+            monitor.mark(change, 'INVALID')
+        return 0, 0
+    previous_url = telegram_post_url(channel, change.original_message_id)
+    post = format_post(change.body, change.item.source, change.source_url, max_chars=2200,
+                       feature_title=FEATURE_LABELS['changes'], previous_title='Первый выпуск',
+                       previous_url=previous_url)
+    emit_preview(change.item.source, change.item.title, 'ANALYSIS', ['changes'], False, post)
+    if args.dry_run or not telegram or not destination:
+        return 0, 1
+    reasons = review_reasons(change.evidence, change.body, RewriteMode.ANALYSIS, [], validation.warnings)
+    if reasons and env_bool('REVIEW_UNCERTAIN', True):
+        storage.enqueue_review(change.item, post, change.evidence, 'ANALYSIS', ['changes'], reasons,
+                               rubric='changes', body_text=change.body)
+        monitor.mark(change, 'REVIEW_PENDING')
+        notify_pending(storage, telegram, editor_chat_id)
+        return 0, 1
+    if not monitor.claim(change.item.url):
+        return 0, 0
+    try:
+        message_id = telegram.send(destination, post, preview_url=change.source_url)
+    except Exception as exc:
+        LOGGER.error('Отправка «Тихой правки» не подтверждена (%s). Сверьте страницу %s; повтор остановлен.',
+                     type(exc).__name__, change.source_url)
+        return None
+    status = 'SENT_TO_REVIEW' if review_mode else 'PUBLISHED'
+    storage.save(change.item, status, change.evidence, 'ANALYSIS', ['changes'],
+                 telegram_message_id=message_id, post_html=post, rubric='changes')
+    monitor.finish(change, 'REVIEW_PENDING' if review_mode else 'PUBLISHED')
+    return 1, 1
+
+
 def run(args: argparse.Namespace) -> RunStats:
     args = argparse.Namespace(**vars(args))
     sources = load_sources(args.config)
@@ -263,6 +318,9 @@ def run(args: argparse.Namespace) -> RunStats:
                     sources=sources, privacy_key=token,
                 )
                 notify_pending(storage, telegram, editor_chat_id)
+            except UncertainPageSend:
+                LOGGER.error('Отправка правки из личной проверки не подтверждена; требуется сверка с каналом.')
+                return stats
             except Exception as exc:
                 LOGGER.warning("Обработка личных команд не удалась: %s", type(exc).__name__)
             quote_used = storage.rubric_count_between("quote", day_start, day_end) > 0
@@ -377,9 +435,9 @@ def run(args: argparse.Namespace) -> RunStats:
             for row in recent_publications:
                 if row['rubric'] != 'followup':
                     storage.watch_story(row)
-        feature_allowed = (env_bool('AUTHOR_FEATURES', True) and effective_max_items > 0 and not digest_mode
-                           and not args.emergency_only and not args.quote_of_day
-                           and storage.feature_count_between(day_start, day_end) == 0)
+        feature_window = (env_bool('AUTHOR_FEATURES', True) and effective_max_items > 0 and not digest_mode
+                          and not args.emergency_only and not args.quote_of_day)
+        feature_allowed = feature_window and storage.feature_count_between(day_start, day_end) == 0
         feature_preference = args.author_feature or 'auto'
         requests = {str(row['url']): row for row in storage.pending_reader_requests()}
         for item in items:
@@ -388,10 +446,26 @@ def run(args: argparse.Namespace) -> RunStats:
                 storage.index_reader_url(fingerprint, item.url)
         # Suggestions influence selection ONLY if the public URL is independently in a
         # connected current RSS feed. Never fetch a URL supplied by a private message.
-        if feature_allowed and (args.scheduled_release or args.author_feature):
+        if feature_window and (args.scheduled_release or args.author_feature):
             items.sort(key=lambda item: (not is_emergency(item, topic_filter.match(item).topics),
                                         request_key(token, item.url) not in requests))
-            if feature_preference in {'auto', 'followup'}:
+            if feature_preference in {'auto', 'changes'}:
+                change_result = release_page_change(
+                    storage, items, sources, article_fetcher, telegram, args, channel,
+                    review_chat_id if review_mode else channel, review_mode, editor_chat_id,
+                    datetime.now(timezone.utc), publication_zone(post_timezone), feature_allowed)
+                if change_result is None:
+                    return stats
+                change_sent, change_previews = change_result
+                stats.sent += change_sent
+                stats.previews += change_previews
+                if change_sent or (args.dry_run and change_previews):
+                    produced += 1
+                    feature_allowed = False
+                    published_today += int(bool(change_sent and not review_mode))
+                    if produced >= effective_max_items:
+                        return stats
+            if feature_allowed and feature_preference in {'auto', 'followup'}:
                 follow_sent, follow_previews = release_followup(
                     storage, items, article_fetcher, telegram, args, channel,
                     review_chat_id if review_mode else channel, review_mode, datetime.now(timezone.utc), token,
@@ -697,6 +771,10 @@ def run(args: argparse.Namespace) -> RunStats:
             if status == 'PUBLISHED':
                 storage.cover_reader_request(request_key(token, item.url))
                 if env_bool('AUTHOR_FEATURES', True):
+                    if article.page_verified:
+                        monitor = PageMonitor(storage)
+                        monitor.enroll(storage.recent_published(), sources, datetime.now(timezone.utc))
+                        monitor.observe(article, datetime.now(timezone.utc))
                     recent = storage.recent_published(limit=1)
                     if recent:
                         storage.watch_story(recent[0])
@@ -782,7 +860,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--process-editor-messages", action="store_true", help="Handle private editor commands only")
     parser.add_argument("--scheduled-release", action="store_true", help="Publish at most one current daytime slot, without catch-up bursts")
     parser.add_argument("--max-candidates", type=int, default=40, help="Limit article extraction and rewriting per run")
-    parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader', 'translation', 'excuse', 'career'],
+    parser.add_argument('--author-feature', choices=['auto', 'responsibility', 'followup', 'contrast', 'cost', 'reader', 'translation', 'excuse', 'career', 'changes'],
                         help='Use at most one evidence-backed author rubric within the daily quota')
     return parser.parse_args(argv)
 

@@ -63,6 +63,17 @@ CREATE TABLE IF NOT EXISTS reader_votes (
 CREATE TABLE IF NOT EXISTS style_memory (
     event_key TEXT PRIMARY KEY, body_text TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS page_watches (
+    url TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL,
+    message_id INTEGER, started_at TEXT NOT NULL, next_check TEXT NOT NULL,
+    latest_version INTEGER
+);
+CREATE TABLE IF NOT EXISTS page_versions (
+    id INTEGER PRIMARY KEY, url TEXT NOT NULL, body_text TEXT NOT NULL,
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, previous_id INTEGER,
+    status TEXT NOT NULL, event_url TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_page_versions_url ON page_versions(url, id DESC);
 """
 
 

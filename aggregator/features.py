@@ -11,12 +11,13 @@ from .article import clean_html
 from .dedupe import normalize_title
 from .models import Article, FeedItem
 
-FEATURE_RUBRICS = ("responsibility", "followup", "contrast", "cost", "reader", "translation", "excuse", "career")
+FEATURE_RUBRICS = ("responsibility", "followup", "contrast", "cost", "reader", "translation", "excuse", "career", "changes")
 FEATURE_LABELS = {
     "responsibility": "Кто отвечал", "followup": "Не забыли",
     "contrast": "Две России в один день", "cost": "Цена решения",
     "reader": "Разбор по запросу",
     "translation": "Перевод с чиновничьего", "excuse": "Отмазка недели", "career": "Карьерный лифт",
+    "changes": "Тихая правка",
 }
 
 

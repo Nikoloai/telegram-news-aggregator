@@ -20,6 +20,9 @@ class Article:
     item: FeedItem
     text: str
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    page_verified: bool = False
+    page_title: str = ''
+    page_text: str = ''
 
 
 @dataclass(slots=True)

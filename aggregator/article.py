@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .models import Article, FeedItem
+from .dedupe import normalize_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +28,9 @@ class ArticleFetcher:
 
     def fetch(self, item: FeedItem) -> Article:
         fallback = clean_html(item.description)
+        page_verified = False
+        page_title = ''
+        page_text = ''
         try:
             response = self.session.get(item.url, timeout=self.timeout)
             response.raise_for_status()
@@ -34,10 +38,23 @@ class ArticleFetcher:
             canonical = soup.select_one('link[rel="canonical"]')
             if canonical and canonical.get("href"):
                 item.canonical_url = str(canonical["href"])
-            root = soup.find("article") or soup.find("main") or soup.body
+            article_root = soup.find("article") or soup.find("main")
+            root = article_root or soup.body
+            heading = root.find('h1') if root else None
+            page_title = clean_html(str(heading)) if heading else ''
+            if article_root:
+                for element in article_root.select('nav, aside, footer, script, style, form'):
+                    element.decompose()
+                page_text = clean_html(str(article_root))
             paragraphs = root.find_all("p") if root else []
             text = "\n".join(
                 part for part in (clean_html(str(p)) for p in paragraphs) if len(part) >= 35
+            )
+            page_verified = bool(
+                article_root and 120 <= len(text) <= self.max_chars
+                and 120 <= len(page_text) <= self.max_chars
+                and normalize_url(getattr(response, 'url', '') or item.url) == normalize_url(item.url)
+                and 'html' in response.headers.get('Content-Type', '').lower()
             )
             if len(text) < 120:
                 meta = soup.select_one('meta[property="og:description"]') or soup.select_one(
@@ -48,4 +65,5 @@ class ArticleFetcher:
         except requests.RequestException as exc:
             LOGGER.warning("Не удалось получить статью %s: %s", item.url, exc)
             text = fallback
-        return Article(item=item, text=(text or fallback)[: self.max_chars])
+        return Article(item=item, text=(text or fallback)[: self.max_chars], page_verified=page_verified,
+                       page_title=page_title, page_text=page_text if page_verified else '')
