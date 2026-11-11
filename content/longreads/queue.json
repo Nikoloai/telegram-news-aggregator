@@ -56,5 +56,13 @@
     "publish_at": "2026-11-08T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "unsafe-housing-wait-2026-11",
+    "article": "08-unsafe-housing-wait.md",
+    "announcement": "08-unsafe-housing-wait-teaser.txt",
+    "publish_at": "2026-11-11T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
