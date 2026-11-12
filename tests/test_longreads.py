@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from aggregator.longreads import (LongreadPublisher, RemoteError, announcement_html,
-                                 eligible, load_queue, publish_due, render_article)
+                                 eligible, load_queue, predecessor_ready, publish_due, render_article)
 from aggregator.storage import Storage
 
 NOW = datetime(2026, 10, 21, 15, 0, tzinfo=timezone.utc)
@@ -94,6 +94,48 @@ def test_dry_preview_has_no_external_writes_or_state_changes(queue, storage):
     root, _ = queue
     assert publish_due(root, storage, None, NOW)['status'] == 'preview'
     assert storage.get_meta('longread:sample') is None
+
+
+@pytest.mark.parametrize('status', ['page_creating', 'sending', 'failed', None])
+def test_dependent_longread_waits_for_confirmed_predecessor(storage, status):
+    item = {'publish_after': 'earlier', 'min_hours_after': 48}
+    if status:
+        storage.set_meta('longread:earlier', json.dumps({'status': status, 'published_at': NOW.isoformat()}))
+    assert not predecessor_ready(item, storage, NOW + timedelta(days=2))
+
+
+def test_dependency_interval_uses_actual_publication_including_after_edits(storage):
+    storage.set_meta('longread:earlier', json.dumps({'status': 'published', 'published_at': NOW.isoformat(),
+                                                    'updated_at': (NOW + timedelta(days=1)).isoformat()}))
+    item = {'publish_after': 'earlier', 'min_hours_after': 48}
+    assert not predecessor_ready(item, storage, NOW + timedelta(hours=47, minutes=59))
+    assert predecessor_ready(item, storage, NOW + timedelta(hours=48))
+
+
+def test_due_dependent_is_not_sent_before_predecessor_receipt(queue, storage):
+    root, item = queue
+    first = dict(item, slug='earlier', approved=False, publish_at=(NOW - timedelta(days=1)).isoformat())
+    item.update(publish_after='earlier', min_hours_after=48)
+    (root / 'queue.json').write_text(json.dumps([first, item]), encoding='utf-8')
+    assert publish_due(root, storage, None, NOW) is None
+    stamp = NOW - timedelta(hours=48)
+    storage.set_meta('longread:earlier', json.dumps({'status': 'published', 'published_at': stamp.isoformat(),
+                                                    'message_id': 90, 'title': 'Earlier'}))
+    storage.connection.execute('INSERT INTO publications VALUES (?,?,?,?,?)',
+                               ('earlier', 'https://example.org/earlier', stamp.isoformat(), 'longread', 90))
+    storage.connection.commit()
+    assert publish_due(root, storage, None, NOW)['slug'] == 'sample'
+
+
+@pytest.mark.parametrize('changes', [dict(publish_after='missing'), dict(publish_after='sample'),
+                                     dict(min_hours_after=48), dict(min_hours_after=True),
+                                     dict(min_hours_after=-1)])
+def test_queue_rejects_invalid_dependency(queue, changes):
+    root, item = queue
+    item.update(changes)
+    (root / 'queue.json').write_text(json.dumps([item]), encoding='utf-8')
+    with pytest.raises(ValueError):
+        load_queue(root)
 
 
 def test_publish_once_encrypted_account_and_shared_quota(queue, storage, monkeypatch):

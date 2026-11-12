@@ -93,7 +93,39 @@ def load_queue(root: Path) -> list[dict]:
         teaser = (root / item['announcement']).read_text(encoding='utf-8').strip()
         if not 100 <= len(teaser) <= 1500 or 'http' in teaser:
             raise ValueError('Announcement must be short and must not contain placeholder links')
+    by_slug = {item['slug']: item for item in queue}
+    for item in queue:
+        predecessor = item.get('publish_after')
+        delay = item.get('min_hours_after', 0)
+        if type(delay) is not int or not 0 <= delay <= 8760 or (delay and not predecessor):
+            raise ValueError('Invalid longread dependency interval')
+        if predecessor is not None and (not isinstance(predecessor, str) or predecessor not in by_slug):
+            raise ValueError('Unknown longread predecessor')
+    for item in queue:
+        predecessor = item.get('publish_after')
+        seen = {item['slug']}
+        while predecessor is not None:
+            if predecessor in seen:
+                raise ValueError('Cyclic longread publication order')
+            seen.add(predecessor)
+            predecessor = by_slug[predecessor].get('publish_after')
     return sorted(queue, key=lambda item: datetime.fromisoformat(item['publish_at']))
+
+
+def predecessor_ready(item: dict, storage: Storage, now: datetime) -> bool:
+    predecessor = item.get('publish_after')
+    if not predecessor:
+        return True
+    receipt = json.loads(storage.get_meta('longread:' + predecessor) or '{}')
+    if receipt.get('status') != 'published':
+        return False
+    try:
+        published = datetime.fromisoformat(receipt['published_at'])
+        if published.tzinfo is None:
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return now >= published + timedelta(hours=item.get('min_hours_after', 0))
 
 
 def eligible(item: dict, now: datetime, immediate: bool = False) -> bool:
@@ -288,6 +320,8 @@ def publish_due(root: Path, storage: Storage, publisher: LongreadPublisher | Non
             print('Longread awaiting manual reconciliation:', item['slug'])
             continue
         if receipt.get('status') == 'published' or not eligible(item, now, immediate):
+            continue
+        if not predecessor_ready(item, storage, now):
             continue
         if not (immediate and item.get('publish_immediately') is True):
             if not spacing_ready(now, storage.last_publication_at()):
