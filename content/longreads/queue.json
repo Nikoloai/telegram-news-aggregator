@@ -79,6 +79,7 @@
     "announcement": "10-besprozvannykh-blue-prices-teaser.txt",
     "publish_at": "2026-11-12T09:14:05+03:00",
     "approved": true,
-    "publish_immediately": false
+    "publish_immediately": false,
+    "revision": 2
   }
 ]
