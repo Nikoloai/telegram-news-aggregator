@@ -49,6 +49,31 @@ def inline_nodes(text: str) -> list:
     return result
 
 
+# Use one full Markdown image block so each photo has a verifiable caption.
+# Images must be hosted remotely; do not treat article-page links as image URLs.
+IMAGE_BLOCK = re.compile(r'!\[([^\]\n]*)\]\((https://[^\s)]+)(?:\s+"([^"\n]*)")?\)')
+
+
+def image_node(block: str) -> dict | None:
+    if not block.startswith('!['):
+        return None
+    matched = IMAGE_BLOCK.fullmatch(block)
+    if not matched:
+        raise ValueError('Invalid Telegraph image Markdown syntax')
+    alt, url, caption = matched.groups()
+    parsed = urlsplit(url)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('Image URL must be public HTTPS')
+    # Prevent accidentally embedding HTML article pages as images.
+    if not parsed.path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+        raise ValueError('Image URL must point to a supported image file')
+    children = [{'tag': 'img', 'attrs': {'src': url}}]
+    label = caption or alt
+    if label:
+        children.append({'tag': 'figcaption', 'children': [label]})
+    return {'tag': 'figure', 'children': children}
+
+
 def render_article(markdown: str) -> tuple[str, list]:
     blocks = re.split(r'\n\s*\n', markdown.strip())
     if not blocks or not blocks[0].startswith('# '):
@@ -58,6 +83,10 @@ def render_article(markdown: str) -> tuple[str, list]:
         raise ValueError('Invalid article title length')
     content = []
     for block in blocks:
+        photo = image_node(block.strip())
+        if photo is not None:
+            content.append(photo)
+            continue
         if block.startswith('## '):
             tag, text = 'h3', block[3:]
         elif block.startswith('### '):
