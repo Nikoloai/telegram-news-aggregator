@@ -122,5 +122,14 @@
     "publish_at": "2026-11-24T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "maria-bontsler-verdict-2026-11",
+    "article": "16-maria-bontsler-verdict.md",
+    "announcement": "16-maria-bontsler-verdict-teaser.txt",
+    "publish_at": "2026-11-17T08:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false,
+    "revision": 1
   }
 ]
