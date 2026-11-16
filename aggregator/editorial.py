@@ -184,9 +184,11 @@ def rank_news(
     weights = (
         (r"погиб|ранен|взрыв|эвакуац|обстрел", 12),
         (r"эпидем|массов.*(?:отравлен|заражен)|санитарн.*(?:угроз|опасност)", 12),
-        (r"авари|отключен.*(?:свет|тепл|вод|электр)", 9),
-        (r"арест|приговор|политзаключ|пытк", 9),
-        (r"закон|налог|инфляц|санкц|блокиров|коррупц|хищен", 7),
+        (r"арест|приговор|политзаключ|пытк|госизмен|обыск", 12),
+        (r"коррупц|хищен|госконтракт|земельн.*решен|губернатор|"
+         r"беспрозванных|политическ.*преследован|незаконн.*приговор", 11),
+        (r"закон|налог|инфляц|санкц|блокиров|бюджет|госдум|выбор", 9),
+        (r"авари|отключен.*(?:свет|тепл|вод|электр)", 3),
         (r"награ|знак|пропаганд|импортозамещ", 3),
     )
 
@@ -195,7 +197,9 @@ def rank_news(
         topics = TopicFilter().match(item).topics
         importance = max((weight for pattern, weight in weights if re.search(pattern, primary)), default=2)
         if 'kaliningrad' in topics and not regional_recent:
-            importance += 4
+            importance += 5
+        if 'kaliningrad' in topics and set(topics).intersection({'state_policy', 'corruption', 'repression', 'politics'}):
+            importance += 3
         age = max(0, (now - item.published_at).total_seconds() / 3600) if item.published_at else 48
         repetition = sum(stories_match(item.title, str(row["title"])) for row in recent)
         varied = 1 if classify_mode(item.title, clean_html(item.description)) in preferred else 0
