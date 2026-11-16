@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import requests
@@ -9,6 +10,8 @@ from aggregator.models import Article
 from aggregator.modes import RewriteMode
 
 from .base import Rewriter
+
+LOGGER = logging.getLogger('aggregator.llm_usage')
 
 SYSTEM_PROMPT = """Ты — автор русскоязычного Telegram-канала жёсткой авторской сатиры «Гвоздика».
 Это не нейтральная новостная лента с приклеенной в конце шуткой. Новость — фактическая основа самостоятельного сатирического мини-текста.
@@ -148,4 +151,14 @@ class LLMRewriter(Rewriter):
             timeout=self.timeout,
         )
         response.raise_for_status()
-        return str(response.json()["choices"][0]["message"]["content"]).strip()
+        result = response.json()
+        usage = result.get("usage") or {}
+        if usage:
+            LOGGER.info(
+                "API usage model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+                result.get("model", self.model),
+                usage.get("prompt_tokens", "n/a"),
+                usage.get("completion_tokens", "n/a"),
+                usage.get("total_tokens", "n/a"),
+            )
+        return str(result["choices"][0]["message"]["content"]).strip()
