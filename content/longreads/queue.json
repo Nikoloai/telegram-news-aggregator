@@ -111,9 +111,9 @@
     "slug": "nemtsov-convicts-2026-11",
     "article": "14-nemtsov-convicts.md",
     "announcement": "14-nemtsov-convicts-teaser.txt",
-    "publish_at": "2026-11-21T18:00:00+03:00",
+    "publish_at": "2026-11-16T11:40:00+03:00",
     "approved": true,
-    "publish_immediately": false
+    "publish_immediately": true
   },
   {
     "slug": "kaliningrad-kashtanovy-contract-2026-11",
