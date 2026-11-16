@@ -81,5 +81,13 @@
     "approved": true,
     "publish_immediately": false,
     "revision": 2
+  },
+  {
+    "slug": "rural-medicine-orenburg-2026-11",
+    "article": "11-rural-medicine-orenburg.md",
+    "announcement": "11-rural-medicine-orenburg-teaser.txt",
+    "publish_at": "2026-11-18T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
