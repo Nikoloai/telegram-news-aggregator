@@ -40,7 +40,7 @@ jobs:
       REVIEW_UNCERTAIN: ${{ vars.REVIEW_UNCERTAIN || 'true' }}
       NEWS_MAX_AGE_HOURS: ${{ vars.NEWS_MAX_AGE_HOURS || '48' }}
       RUN_MODE: ${{ inputs.run_mode || 'auto' }}
-      REVIEW_MODE: ${{ vars.REVIEW_MODE || 'true' }}
+      REVIEW_MODE: ${{ vars.REVIEW_MODE || 'false' }}
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
       LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4.1-mini' }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
