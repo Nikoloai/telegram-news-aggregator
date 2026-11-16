@@ -69,3 +69,34 @@ def test_public_safety_in_novosibirsk_is_relevant_without_political_keywords():
                                          "https://example.org/safety"))
     assert result.accepted
     assert "public_safety" in result.topics
+
+
+def test_routine_local_accidents_do_not_enter_political_feed():
+    for title in (
+        "В Калининграде при ДТП пострадал один водитель",
+        "На улице в Калининграде сгорел припаркованный автомобиль",
+        "В Новосибирске отключили воду в одном доме из-за аварии",
+    ):
+        match = TopicFilter().match(FeedItem("Test", title, "https://example.org/incident"))
+        assert not match.accepted, title
+        assert "routine_minor_incident" in match.excluded_by
+
+
+def test_major_outages_and_public_accountability_are_still_relevant():
+    cases = (
+        ("Крупная авария в Калининграде: тысячи людей остались без отопления", ""),
+        ("В Калининграде авария на теплотрассе", "Несколько районов остались без отопления"),
+        ("В Калининграде пожар в больнице, началась эвакуация", ""),
+        ("В Калининграде авария на дороге", "После проверки выявлена халатность чиновников"),
+    )
+    for title, description in cases:
+        assert TopicFilter().match(FeedItem("Test", title, "https://example.org/major",
+                                            description=description)).accepted
+
+
+def test_political_and_repression_news_not_blocked_by_incident_gate():
+    item = FeedItem("Test", "В Калининграде арестовали журналиста после расследования аварии",
+                    "https://example.org/repression")
+    result = TopicFilter().match(item)
+    assert result.accepted
+    assert "repression" in result.topics
