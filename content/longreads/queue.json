@@ -98,5 +98,29 @@
     "approved": true,
     "publish_immediately": true,
     "revision": 1
+  },
+  {
+    "slug": "kaliningrad-onegin-approval-2026-11",
+    "article": "13-onegin-approval.md",
+    "announcement": "13-onegin-approval-teaser.txt",
+    "publish_at": "2026-11-19T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
+  },
+  {
+    "slug": "nemtsov-convicts-2026-11",
+    "article": "14-nemtsov-convicts.md",
+    "announcement": "14-nemtsov-convicts-teaser.txt",
+    "publish_at": "2026-11-21T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
+  },
+  {
+    "slug": "kaliningrad-kashtanovy-contract-2026-11",
+    "article": "15-kashtanovy-park-contract.md",
+    "announcement": "15-kashtanovy-park-contract-teaser.txt",
+    "publish_at": "2026-11-24T18:00:00+03:00",
+    "approved": true,
+    "publish_immediately": false
   }
 ]
