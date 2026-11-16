@@ -89,5 +89,14 @@
     "publish_at": "2026-11-18T18:00:00+03:00",
     "approved": true,
     "publish_immediately": false
+  },
+  {
+    "slug": "navalny-suspects-fates-2026-11",
+    "article": "12-navalny-after-poisoning.md",
+    "announcement": "12-navalny-after-poisoning-teaser.txt",
+    "publish_at": "2026-11-16T11:40:00+03:00",
+    "approved": true,
+    "publish_immediately": true,
+    "revision": 1
   }
 ]
