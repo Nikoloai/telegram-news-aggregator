@@ -58,6 +58,44 @@ def kaliningrad_context(text: str) -> bool:
     ))
 
 
+# Incidents are not the editorial core. A routine local mishap belongs in this
+# channel only if it has substantial consequences or public accountability.
+ROUTINE_INCIDENT_TITLE = re.compile(
+    r'дтп|авари|пожар|возгоран|задымлен|прорыв|порыв труб|'
+    r'отключени|без (?:света|воды|отопления)|сгорел|столкнул|'
+    r'сбил[аи]?|дорожн.*происшеств|упал[аи]? дерев',
+    re.IGNORECASE,
+)
+MAJOR_INCIDENT_IMPACT = re.compile(
+    r'массов|крупн|масштабн|чрезвычайн|режим чс|эвакуац|'
+    r'десятк|сотн|тысяч|многоквартирн.*(?:без|остал)|'
+    r'(?:город|район|несколько районов|несколько населенных пунктов).{0,80}'
+    r'(?:без света|без воды|без отопления|обесточ|отключ)|'
+    r'торгов.*центр|больниц|школ|детск.*сад|'
+    r'(?:(?:1[0-9]|[2-9][0-9]|[1-9][0-9]{2,})\\s+'
+    r'(?:человек|жител|погиб|пострада|ранен))',
+    re.IGNORECASE,
+)
+PUBLIC_ACCOUNTABILITY = re.compile(
+    r'халатност|нарушени.*(?:норм|правил|требован)|'
+    r'скрыл[иа]?|фальсифиц|расследован|суд|провер[кя]|'
+    r'коррупц|взятк|госконтракт|контракт|'
+    r'неисправност.*(?:предупреждал|сообщал)|'
+    r'власт.*(?:игнорировал|не реагировал)',
+    re.IGNORECASE,
+)
+
+
+def is_routine_incident(title: str, body: str, topics: list[str]) -> bool:
+    """Keep large incidents and material accountability; drop minor local mishaps."""
+    if not ROUTINE_INCIDENT_TITLE.search(title):
+        return False
+    if set(topics).intersection({'war', 'military', 'repression', 'corruption'}):
+        return False
+    return not (MAJOR_INCIDENT_IMPACT.search(f'{title} {body}')
+                or PUBLIC_ACCOUNTABILITY.search(f'{title} {body}'))
+
+
 class TopicFilter:
     """Rule-based MVP boundary with a stable interface for a future classifier."""
 
@@ -73,6 +111,9 @@ class TopicFilter:
         if not russia_related:
             excluded.append("not_russia_related")
         accepted = bool(topics) and russia_related and not (excluded and not topics)
+        if accepted and is_routine_incident(item.title, clean_html(item.description), topics):
+            accepted = False
+            excluded.append("routine_minor_incident")
         if accepted and regional:
             topics.append('kaliningrad')
         return TopicMatch(
