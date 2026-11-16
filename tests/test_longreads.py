@@ -52,6 +52,36 @@ def test_renderer_preserves_source_links_and_formatting():
     assert nodes[2]['children'][2]['tag'] == 'em'
 
 
+def test_renderer_includes_image_and_attribution_caption():
+    markdown = ('# Title\n\nIntro\n\n'
+                '![Архивная фотография](https://images.example.org/court.jpeg '
+                '"Фото: редакция / архив, разрешённое использование")\n\n'
+                '## After photo')
+    title, nodes = render_article(markdown)
+    assert title == 'Title'
+    assert [node['tag'] for node in nodes] == ['p', 'figure', 'h3']
+    assert nodes[1]['children'][0]['attrs']['src'] == 'https://images.example.org/court.jpeg'
+    assert nodes[1]['children'][1] == {
+        'tag': 'figcaption',
+        'children': ['Фото: редакция / архив, разрешённое использование']}
+
+
+def test_renderer_uses_accessible_caption_fallback():
+    _, nodes = render_article('# Title\n\n![Подпись](https://images.example.org/photo.png)')
+    assert nodes[0]['children'][1]['children'] == ['Подпись']
+
+
+@pytest.mark.parametrize('bad_image', [
+    '![Alt](http://example.org/image.jpg)',
+    '![Alt](https://example.org/not-an-image.html)',
+    '![Alt](https://example.org/a.jpg "unclosed)',
+    '![Alt](https://person:pass@example.org/image.png)',
+])
+def test_renderer_rejects_invalid_image_source(bad_image):
+    with pytest.raises(ValueError):
+        render_article('# Title\n\n' + bad_image)
+
+
 def test_renderer_rejects_oversized_content():
     with pytest.raises(ValueError):
         render_article('# Title\n\n' + 'а' * 64000)
