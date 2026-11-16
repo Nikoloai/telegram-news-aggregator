@@ -40,7 +40,7 @@ jobs:
       REVIEW_UNCERTAIN: ${{ vars.REVIEW_UNCERTAIN || 'true' }}
       NEWS_MAX_AGE_HOURS: ${{ vars.NEWS_MAX_AGE_HOURS || '48' }}
       RUN_MODE: ${{ inputs.run_mode || 'auto' }}
-      REVIEW_MODE: ${{ vars.REVIEW_MODE || 'false' }}
+      REVIEW_MODE: 'false'
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
       LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4.1-mini' }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
@@ -89,6 +89,13 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      - name: Report publication mode
+        shell: bash
+        run: |
+          echo "Public news autopublish: enabled (REVIEW_MODE=$REVIEW_MODE)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Uncertain stories and author sources retain review checks (REVIEW_UNCERTAIN=$REVIEW_UNCERTAIN)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Regular releases: Moscow daytime slots, one story per slot, at least an hour apart." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify Telegram bot access
         run: python -m scripts.check_telegram_access
