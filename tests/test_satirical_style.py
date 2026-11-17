@@ -42,6 +42,19 @@ def test_serious_topics_override_authorial_style(title, text):
     assert editorial_mode(title, text, 'satirical') == RewriteMode.HARD_NEWS
 
 
+def test_war_budget_decision_remains_valid_satirical_subject_without_victims():
+    assert editorial_mode(
+        'Губернатор выделил деньги из резервного фонда на военные выплаты',
+        'Правительство запланировало финансирование на следующий год.',
+        'satirical',
+    ) == RewriteMode.SATIRICAL
+    assert editorial_mode(
+        'Губернатор выделил деньги из резервного фонда после гибели людей',
+        'На месте атаки пострадали жители.',
+        'satirical',
+    ) == RewriteMode.HARD_NEWS
+
+
 def test_legacy_news_style_is_available(monkeypatch):
     monkeypatch.setenv('EDITORIAL_STYLE', 'news')
     assert editorial_mode('Госдума приняла новый закон о налогах') == RewriteMode.ANALYSIS
