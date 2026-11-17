@@ -49,16 +49,16 @@ class ArticleFetcher:
         fallback = clean_html(item.description)
         if (urlsplit(item.url).hostname == 't.me' and fallback
                 and re.fullmatch(r'/[A-Za-z0-9_]{5,32}/\d+', urlsplit(item.url).path)):
-            return Article(item=item, text=fallback[:self.max_chars])
+            return Article(item=item, text=fallback[:self.max_chars], image_url=item.image_url)
         page_verified = False
         page_title = ''
         page_text = ''
-        image_url = None
+        image_url = item.image_url
         try:
             response = self.session.get(item.url, timeout=self.timeout)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            image_url = article_image_url(soup, str(getattr(response, "url", "") or item.url))
+            image_url = article_image_url(soup, str(getattr(response, "url", "") or item.url)) or item.image_url
             canonical = soup.select_one('link[rel="canonical"]')
             if canonical and canonical.get("href"):
                 item.canonical_url = str(canonical["href"])
