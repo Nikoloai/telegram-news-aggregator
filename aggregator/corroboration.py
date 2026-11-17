@@ -28,7 +28,7 @@ def stories_match(left: str, right: str, threshold: int = 76) -> bool:
 # One city in the headline cannot corroborate or link a different incident.
 # This intentionally misses some true cross-region reports rather than inventing
 # a relationship between unrelated attacks or legal cases.
-PLACE_RE = re.compile(r"\\b(?:в|во|из|под|около|у)\\s+([А-ЯЁ][а-яё]{3,})\\b")
+PLACE_RE = re.compile(r"\b(?:в|во|из|под|около|у)\s+([А-ЯЁ][а-яё]{3,})\b")
 PLACE_STOP = {"россия", "россии", "украина", "украине", "мире", "городе", "области", "регионе"}
 
 
