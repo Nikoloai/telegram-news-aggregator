@@ -26,6 +26,27 @@ def _published(entry: Any) -> datetime | None:
     return datetime.fromtimestamp(calendar.timegm(value), tz=timezone.utc)
 
 
+def rss_image_url(entry: Any) -> str | None:
+    """Prefer image enclosure/media entries explicitly supplied by the publisher."""
+    candidates = [
+        *(entry.get("media_content") or []),
+        *(entry.get("media_thumbnail") or []),
+        *(entry.get("enclosures") or []),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        value = str(candidate.get("url") or candidate.get("href") or "").strip()
+        parts = urlsplit(value)
+        mime = str(candidate.get("type") or "").lower()
+        if (parts.scheme == "https" and parts.hostname and not parts.username
+                and not parts.password and len(value) < 2048
+                and (mime.startswith("image/") or
+                     re.search(r'\\.(?:jpe?g|png|webp|gif)(?:$|[?#])', parts.path + "?", re.I))):
+            return value
+    return None
+
+
 def parse_feed(content: bytes | str, source: str) -> list[FeedItem]:
     parsed = feedparser.parse(content)
     items: list[FeedItem] = []
@@ -45,6 +66,7 @@ def parse_feed(content: bytes | str, source: str) -> list[FeedItem]:
                 description=str(entry.get("summary") or entry.get("description") or content or ""),
                 published_at=_published(entry),
                 categories=[tag for tag in tags if tag],
+                image_url=rss_image_url(entry),
             )
         )
     return items
@@ -90,7 +112,17 @@ def parse_telegram_page(content: bytes | str, source: dict[str, Any]) -> list[Fe
         forwarded = post.select_one('.tgme_widget_message_forwarded_from')
         if forwarded:
             text = f'Переслано из {forwarded.get_text(" ", strip=True)}.\n{text}'
-        items.append(FeedItem(source['name'], title, url, text, published))
+        image_url = None
+        photo = post.select_one('.tgme_widget_message_photo_wrap')
+        if photo:
+            style = str(photo.get("style") or "")
+            match = re.search(r'background-image:\\s*url\\([\\x22\\x27]?([^\\x22\\x27)]+)', style, re.I)
+            if match:
+                candidate = match.group(1).strip()
+                parts = urlsplit(candidate)
+                if parts.scheme == "https" and parts.hostname and len(candidate) < 2048:
+                    image_url = candidate
+        items.append(FeedItem(source['name'], title, url, text, published, image_url=image_url))
     return sorted(items, key=lambda item: item.published_at, reverse=True)
 
 
