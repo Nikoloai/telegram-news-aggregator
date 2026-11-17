@@ -25,12 +25,30 @@ def stories_match(left: str, right: str, threshold: int = 76) -> bool:
     return len(left_words.intersection(right_words)) >= 3
 
 
+# One city in the headline cannot corroborate or link a different incident.
+# This intentionally misses some true cross-region reports rather than inventing
+# a relationship between unrelated attacks or legal cases.
+PLACE_RE = re.compile(r"\\b(?:в|во|из|под|около|у)\\s+([А-ЯЁ][а-яё]{3,})\\b")
+PLACE_STOP = {"россия", "россии", "украина", "украине", "мире", "городе", "области", "регионе"}
+
+
+def headline_places(title: str) -> set[str]:
+    return {match.lower().replace("ё", "е")[:6] for match in PLACE_RE.findall(title)
+            if match.lower().replace("ё", "е") not in PLACE_STOP}
+
+
+def compatible_event_places(left: str, right: str) -> bool:
+    a, b = headline_places(left), headline_places(right)
+    return not (a and b) or bool(a & b)
+
+
 def corroborating_sources(item: FeedItem, candidates: list[FeedItem]) -> list[str]:
     sources: list[str] = []
     for candidate in candidates:
         if candidate is item or candidate.source == item.source:
             continue
-        if stories_match(item.title, candidate.title) and candidate.source not in sources:
+        if (stories_match(item.title, candidate.title) and compatible_event_places(item.title, candidate.title)
+                and candidate.source not in sources):
             sources.append(candidate.source)
     return sources
 
@@ -78,7 +96,7 @@ def source_evidence(item: FeedItem, candidates: list[FeedItem]) -> SourceEvidenc
         if item.published_at and other.published_at:
             if abs(item.published_at - other.published_at) > timedelta(hours=36):
                 continue
-        if not stories_match(item.title, other.title):
+        if not stories_match(item.title, other.title) or not compatible_event_places(item.title, other.title):
             continue
         if other.source not in sources:
             sources.append(other.source)
