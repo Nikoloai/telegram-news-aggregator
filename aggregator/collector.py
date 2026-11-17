@@ -42,7 +42,7 @@ def rss_image_url(entry: Any) -> str | None:
         if (parts.scheme == "https" and parts.hostname and not parts.username
                 and not parts.password and len(value) < 2048
                 and (mime.startswith("image/") or
-                     re.search(r'\\.(?:jpe?g|png|webp|gif)(?:$|[?#])', parts.path + "?", re.I))):
+                     re.search(r'\.(?:jpe?g|png|webp|gif)(?:$|[?#])', parts.path + "?", re.I))):
             return value
     return None
 
@@ -116,7 +116,7 @@ def parse_telegram_page(content: bytes | str, source: dict[str, Any]) -> list[Fe
         photo = post.select_one('.tgme_widget_message_photo_wrap')
         if photo:
             style = str(photo.get("style") or "")
-            match = re.search(r'background-image:\\s*url\\([\\x22\\x27]?([^\\x22\\x27)]+)', style, re.I)
+            match = re.search(r'background-image:\s*url\(["\x27]?([^"\x27)]+)', style, re.I)
             if match:
                 candidate = match.group(1).strip()
                 parts = urlsplit(candidate)
