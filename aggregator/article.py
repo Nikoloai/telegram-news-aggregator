@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from html import unescape
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -18,6 +18,24 @@ def clean_html(value: str) -> str:
     soup = BeautifulSoup(value or "", "html.parser")
     text = re.sub(r"\s+", " ", unescape(soup.get_text(" ", strip=True))).strip()
     return re.sub(r"\s+([,.;:!?])", r"\1", text)
+
+
+def article_image_url(soup: BeautifulSoup, page_url: str) -> str | None:
+    """Use the article's own social-preview image; no guessed image searches."""
+    for selector in ('meta[property="og:image"]', 'meta[name="twitter:image"]',
+                     'meta[property="twitter:image"]'):
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        raw = str(node.get("content") or "").strip()
+        if not raw:
+            continue
+        image_url = urljoin(page_url, raw)
+        parts = urlsplit(image_url)
+        if (parts.scheme == "https" and parts.hostname and not parts.username
+                and not parts.password and len(image_url) < 2048):
+            return image_url
+    return None
 
 
 class ArticleFetcher:
@@ -35,10 +53,12 @@ class ArticleFetcher:
         page_verified = False
         page_title = ''
         page_text = ''
+        image_url = None
         try:
             response = self.session.get(item.url, timeout=self.timeout)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
+            image_url = article_image_url(soup, str(getattr(response, "url", "") or item.url))
             canonical = soup.select_one('link[rel="canonical"]')
             if canonical and canonical.get("href"):
                 item.canonical_url = str(canonical["href"])
@@ -70,4 +90,5 @@ class ArticleFetcher:
             LOGGER.warning("Не удалось получить статью %s: %s", item.url, exc)
             text = fallback
         return Article(item=item, text=(text or fallback)[: self.max_chars], page_verified=page_verified,
-                       page_title=page_title, page_text=page_text if page_verified else '')
+                       page_title=page_title, page_text=page_text if page_verified else '',
+                       image_url=image_url)
