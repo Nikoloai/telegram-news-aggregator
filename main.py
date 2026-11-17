@@ -682,7 +682,9 @@ def run(args: argparse.Namespace) -> RunStats:
                 validation_source += '\n' + '\n'.join(feature.evidence)
             if (not feature and feature_allowed and not correction and not urgent_post and not promise_result
                     and not rewrite_warnings and (args.scheduled_release or args.author_feature)
-                    and (mode != RewriteMode.SATIRICAL or feature_preference != 'auto')):
+                    and (mode != RewriteMode.SATIRICAL or feature_preference != 'auto'
+                         or not isinstance(rewriter, LLMRewriter)
+                         or request_key(token, item.url) in requests)):
                 if (request_key(token, item.url) in requests and source_url(item.url, sources)
                         and feature_preference in {'auto', 'reader'}):
                     angle = requests[request_key(token, item.url)]['angle']
