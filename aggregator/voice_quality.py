@@ -53,9 +53,9 @@ GENERIC_CONCLUSIONS = (
 
 def satirical_voice_issues(title: str, source: str, body: str) -> list[str]:
     """Obvious shortcomings only; no claim to measure wit by regex."""
-    text = clean_html(body).strip()
+    paragraphs = [clean_html(part) for part in re.split(r"\n\s*\n", body) if clean_html(part)]
+    text = "\n\n".join(paragraphs)
     issues: list[str] = []
-    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     if len(text) < 190:
         issues.append("Текст слишком короток для авторской заметки")
     if len(paragraphs) < 2:
