@@ -113,3 +113,67 @@ def test_send_explicitly_previews_article_instead_of_earlier_post(monkeypatch) -
     monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
     TelegramClient("test").send("@channel", '<a href="https://t.me/channel/1">Ранее</a>', preview_url="https://example.org/article")
     assert calls[0]["link_preview_options"]["url"] == "https://example.org/article"
+
+
+def test_send_photo_with_html_caption(monkeypatch):
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json))
+        return FakeResponse({"message_id": 777})
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    msg = TelegramClient("test").send(
+        "@channel", '<b>Калининград</b> <a href="https://example.org/a">Источник</a>',
+        image_url="https://example.org/news.jpg")
+    assert msg == 777
+    assert len(calls) == 1
+    assert calls[0][0].endswith("/sendPhoto")
+    assert calls[0][1]["photo"] == "https://example.org/news.jpg"
+    assert calls[0][1]["parse_mode"] == "HTML"
+
+
+def test_rejected_photo_falls_back_to_one_text_message(monkeypatch):
+    calls = []
+
+    class BadPhoto:
+        status_code = 400
+
+    def fake_post(url, json, timeout):
+        calls.append(url)
+        return BadPhoto() if url.endswith("/sendPhoto") else FakeResponse({"message_id": 778})
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    assert TelegramClient("test").send("@channel", "Текст", image_url="https://example.org/bad.jpg") == 778
+    assert [url.rsplit('/', 1)[-1] for url in calls] == ["sendPhoto", "sendMessage"]
+
+
+def test_long_caption_falls_back_to_full_text_with_link_preview(monkeypatch):
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json))
+        return FakeResponse({"message_id": 779})
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    long_post = '<b>Новость</b>' + 'д' * 1030
+    assert TelegramClient("test").send("@channel", long_post,
+                                       preview_url="https://example.org/article",
+                                       image_url="https://example.org/news.jpg") == 779
+    assert len(calls) == 1 and calls[0][0].endswith("/sendMessage")
+    assert calls[0][1]["text"] == long_post
+
+
+def test_uncertain_photo_response_never_sends_second_post(monkeypatch):
+    import requests
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append(url)
+        raise requests.Timeout("timeout after possible send")
+
+    monkeypatch.setattr("aggregator.telegram.requests.post", fake_post)
+    import pytest
+    with pytest.raises(requests.Timeout):
+        TelegramClient("test").send("@channel", "Пост", image_url="https://example.org/photo.jpg")
+    assert len(calls) == 1 and calls[0].endswith("/sendPhoto")
