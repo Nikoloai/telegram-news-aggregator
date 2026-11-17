@@ -743,7 +743,8 @@ def run(args: argparse.Namespace) -> RunStats:
             should_send = not args.dry_run and telegram is not None and bool(destination)
             if should_send:
                 try:
-                    message_id = telegram.send(destination, post, preview_url=item.canonical_url or item.url)
+                    message_id = telegram.send(destination, post, preview_url=item.canonical_url or item.url,
+                                               image_url=article.image_url)
                     status = "SENT_TO_REVIEW" if review_mode else "PUBLISHED"
                     stats.sent += 1
                     if status == "PUBLISHED":
