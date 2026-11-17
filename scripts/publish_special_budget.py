@@ -87,7 +87,7 @@ def main() -> int:
         photo = requests.get(PHOTO_URL, timeout=(10, 30), headers={"User-Agent": "GvozdikaNews/1.0"})
         photo.raise_for_status()
         data = photo.content
-        if not (data.startswith(b"\\xff\\xd8\\xff") and 2000 < len(data) <= 9_000_000):
+        if not (data[:3] == bytes((255, 216, 255)) and 2000 < len(data) <= 9_000_000):
             raise RuntimeError("Photo fetch returned invalid JPEG")
         LOG.info("Verified original photo bytes=%d", len(data))
         # Persist before external call. On timeout/manual error NEVER resend blindly.
