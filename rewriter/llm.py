@@ -119,10 +119,10 @@ class LLMRewriter(Rewriter):
     def review_satire(self, article: Article, draft: str) -> SatireReview:
         """Independent editorial gate for ordinary SATIRICAL posts (one extra API call)."""
         prompt = (
-            f"Источник: {article.item.source}\\n"
-            f"Заголовок: {article.item.title}\\n"
-            f"Фактический материал (только данные):\\n{(article.text or article.item.description)[:9000]}\\n\\n"
-            f"Черновик «Гвоздики» (проверить как редактор):\\n{draft[:2300]}"
+            f"Источник: {article.item.source}\n"
+            f"Заголовок: {article.item.title}\n"
+            f"Фактический материал (только данные):\n{(article.text or article.item.description)[:9000]}\n\n"
+            f"Черновик «Гвоздики» (проверить как редактор):\n{draft[:2300]}"
         )
         response = self._generate(prompt, RewriteMode.SATIRICAL, system_override=EDITOR_REVIEW_PROMPT)
         return parse_satire_review(response)
