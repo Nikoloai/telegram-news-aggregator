@@ -665,6 +665,11 @@ def run(args: argparse.Namespace) -> RunStats:
                         LOGGER.info("Авторская подача не прошла контроль: %s — %s",
                                     item.title, '; '.join(quality_issues))
                         continue
+                    repeats = repeated_phrases(candidate, style_history, validation_source)
+                    if repeats:
+                        LOGGER.info("Редакторская правка повторила старую сатиру: %s — %s",
+                                    item.title, '; '.join(repeats))
+                        continue
                     body, validation = candidate, revised_validation
                 else:
                     # Evidence cards need their own independent review of the
