@@ -666,6 +666,26 @@ def run(args: argparse.Namespace) -> RunStats:
                                     item.title, '; '.join(quality_issues))
                         continue
                     body, validation = candidate, revised_validation
+                else:
+                    # Evidence cards need their own independent review of the
+                    # 60–320-character satire, not the full-post copy editor.
+                    try:
+                        editorial = rewriter.review_short_satire(article, satire_draft, author_commentary or '')
+                    except Exception as exc:
+                        LOGGER.warning("Проверка короткой сатиры недоступна (%s); рубрика удержана: %s",
+                                       type(exc).__name__, item.title)
+                        continue
+                    if editorial.decision == 'reject':
+                        LOGGER.info("Короткая авторская ремарка отклонена: %s — %s",
+                                    item.title, editorial.reason)
+                        continue
+                    candidate = editorial.revised_text if editorial.decision == 'revise' else (author_commentary or '')
+                    if (not 60 <= len(candidate) <= 320
+                            or re.search(r'\d|[«»"“”]|https?://', candidate)
+                            or not validator.validate(validation_source, candidate).valid):
+                        LOGGER.warning("Непроверенная ремарка в сатирической рубрике: %s", item.title)
+                        continue
+                    author_commentary = candidate
 
             evidence = source_evidence(item, items)
             corroborated_by = evidence.sources
