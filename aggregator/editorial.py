@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from .article import clean_html
-from .corroboration import stories_match
+from .corroboration import stories_match, compatible_event_places
+from .dedupe import normalize_title
 from .models import FeedItem
 from .filters import TopicFilter, kaliningrad_context
 from .modes import RewriteMode, classify_mode, requires_serious_tone
@@ -213,6 +214,14 @@ def rank_news(
 def related_publication(title: str, rows: Iterable[Mapping[str, object]]) -> Mapping[str, object] | None:
     for row in rows:
         previous_title = str(row["title"])
+        if not compatible_event_places(title, previous_title):
+            continue
+        # The previous strike/accident is not the current strike/accident.
+        # Similar casualty headlines are NOT evidence of a timeline.
+        casualty = r"атак|обстрел|удар|взрыв|погиб|ранен|жертв|убит"
+        if (re.search(casualty, title, re.I) or re.search(casualty, previous_title, re.I)):
+            if normalize_title(title) != normalize_title(previous_title):
+                continue
         if stories_match(title, previous_title, threshold=69):
             return row
     return None
