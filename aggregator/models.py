@@ -23,6 +23,7 @@ class Article:
     page_verified: bool = False
     page_title: str = ''
     page_text: str = ''
+    image_url: str | None = None
 
 
 @dataclass(slots=True)
