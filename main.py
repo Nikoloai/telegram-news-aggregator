@@ -45,6 +45,7 @@ from aggregator.schedule import due_posts, publication_slots, weekly_due, regula
 from aggregator.storage import Storage
 from aggregator.telegram import TelegramClient
 from aggregator.validator import FactPreservationValidator
+from aggregator.voice_quality import satirical_voice_issues
 from rewriter import FallbackRewriter, LLMRewriter, Rewriter
 from rewriter.variation import varied_rewrite, repeated_phrases
 
@@ -616,6 +617,12 @@ def run(args: argparse.Namespace) -> RunStats:
             rewrite_warnings: list[str] = []
             if not validation.valid:
                 error = "; ".join(validation.errors)
+                if mode == RewriteMode.SATIRICAL and isinstance(rewriter, LLMRewriter):
+                    # A bland fallback is not an authored satirical post. Skip rather than
+                    # laundering a fact-changing LLM answer into an ordinary news summary.
+                    LOGGER.warning("Сатира отклонена проверкой фактов: %s — %s", item.title, error)
+                    stats.validation_failed += 1
+                    continue
                 safe_body = FallbackRewriter().rewrite(article, mode)
                 safe_validation = validator.validate(validation_source, safe_body, title=item.title)
                 if not safe_validation.valid:
@@ -627,6 +634,38 @@ def run(args: argparse.Namespace) -> RunStats:
                 satire_rewritten = False
                 satire_draft, author_commentary = None, None
                 rewrite_warnings.append("Переписывание изменило факты; подготовлен исходный пересказ для проверки")
+
+            if mode == RewriteMode.SATIRICAL and isinstance(rewriter, LLMRewriter):
+                if not satire_rewritten:
+                    LOGGER.warning("Авторская сатира не создана; нейтральный fallback не публикуем: %s", item.title)
+                    continue
+                if not satire_draft:
+                    # Editorial review applies to complete ordinary posts. The second
+                    # pass may revise the copy; EVERY revision is revalidated against
+                    # the source before it can be shown or sent.
+                    try:
+                        editorial = rewriter.review_satire(article, body)
+                    except Exception as exc:
+                        LOGGER.warning("Независимая проверка сатиры недоступна (%s); пост удержан: %s",
+                                       type(exc).__name__, item.title)
+                        continue
+                    if editorial.decision == 'reject':
+                        LOGGER.info("Редактор отклонил шаблонную сатиру: %s — %s",
+                                    item.title, editorial.reason)
+                        continue
+                    candidate = editorial.revised_text if editorial.decision == 'revise' else body
+                    revised_validation = validator.validate(validation_source, candidate, title=item.title)
+                    if not revised_validation.valid:
+                        LOGGER.warning("Редакторская правка исказила факты; пост удержан: %s — %s",
+                                       item.title, '; '.join(revised_validation.errors))
+                        stats.validation_failed += 1
+                        continue
+                    quality_issues = satirical_voice_issues(item.title, article.text, candidate)
+                    if quality_issues:
+                        LOGGER.info("Авторская подача не прошла контроль: %s — %s",
+                                    item.title, '; '.join(quality_issues))
+                        continue
+                    body, validation = candidate, revised_validation
 
             evidence = source_evidence(item, items)
             corroborated_by = evidence.sources
@@ -642,7 +681,8 @@ def run(args: argparse.Namespace) -> RunStats:
                 rubric, quote = feature.rubric, None
                 validation_source += '\n' + '\n'.join(feature.evidence)
             if (not feature and feature_allowed and not correction and not urgent_post and not promise_result
-                    and not rewrite_warnings and (args.scheduled_release or args.author_feature)):
+                    and not rewrite_warnings and (args.scheduled_release or args.author_feature)
+                    and (mode != RewriteMode.SATIRICAL or feature_preference != 'auto')):
                 if (request_key(token, item.url) in requests and source_url(item.url, sources)
                         and feature_preference in {'auto', 'reader'}):
                     angle = requests[request_key(token, item.url)]['angle']
