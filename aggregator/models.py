@@ -13,6 +13,7 @@ class FeedItem:
     published_at: datetime | None = None
     categories: list[str] = field(default_factory=list)
     canonical_url: str | None = None
+    image_url: str | None = None
 
 
 @dataclass(slots=True)
