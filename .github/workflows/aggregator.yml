@@ -1,9 +1,6 @@
 name: News aggregator
 
 on:
-  push:
-    branches: [main]
-    paths: ['content/longreads/**']
   workflow_dispatch:
     inputs:
       dry_run:
@@ -16,10 +13,6 @@ on:
         type: choice
         default: auto
         options: [auto, scheduled, news, digest, quote, emergency, weekly, editor, editorial, longread]
-  schedule:
-    - cron: "17,47 * * * *"
-    - cron: "32 18 * * 0"
-    - cron: "32 11 * * *"
 
 permissions:
   contents: write
