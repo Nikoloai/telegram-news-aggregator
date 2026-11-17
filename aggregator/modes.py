@@ -89,6 +89,15 @@ def requires_serious_tone(title: str, text: str = '') -> bool:
     focal = f'{title} ' + ' '.join(re.split(r'(?<=[.!?])\s+', lead)[:2])[:700]
     if _has(focal, ('обстрел', 'атак', 'катастроф', 'пожар', 'горит', 'эвакуац', 'насили', 'насиль', 'авари')):
         return True
+    # A war-related BUDGET or administrative decision is not itself a casualty
+    # report. Keep its satire aimed at the public decision, not its recipients.
+    # The explicit victim, repression and active-disaster guards above win first.
+    if (_has(title, PUBLIC_TARGETS) and
+            _has(focal, ('бюджет', 'финансир', 'выделен', 'выделил', 'расход',
+                         'выплат', 'контракт', 'распоряжен', 'субсид', 'госзакуп')) and
+            not _has(focal, ('арест', 'задерж', 'уголовн.*дел', 'сизо', 'колони',
+                             'пытк', 'обстрел', 'атак', 'взрыв', 'боев.*действ'))):
+        return False
     base = classify_mode(title, text)
     if base != RewriteMode.HARD_NEWS:
         return False
