@@ -13,7 +13,7 @@ class FakeTelegram:
     def get_updates(self, offset=0):
         return [update for update in self.updates if update["update_id"] >= offset]
 
-    def send(self, chat_id, text, preview_url=None):
+    def send(self, chat_id, text, preview_url=None, image_url=None):
         self.messages.append((chat_id, text))
         return len(self.messages)
 
