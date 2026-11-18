@@ -16,7 +16,7 @@ from aggregator.telegram import TelegramClient
 from scripts.railway_cron import check_state
 
 CHANNEL = "@GVOZDIchKAAA"
-INTENT_KEY = "special-post:putin-apec-photo-20261118-v1"
+INTENT_KEY = "special-post:putin-apec-photo-20261118-v2"
 TITLE = "Путину показали его место. Буквально"
 SOURCE_URL = "https://vot-tak.tv/96544562/putin-mesto-obshee-foto-si-trump"
 TEXT = """🇨🇳 <b>ПУТИНУ ПОКАЗАЛИ ЕГО МЕСТО. БУКВАЛЬНО.</b>
@@ -67,6 +67,8 @@ def main():
         response = requests.post("https://api.telegram.org/bot" + token + "/sendPhoto",
             data={"chat_id": CHANNEL, "caption": CAPTION, "parse_mode": "HTML", "show_caption_above_media": "true"},
             files={"photo": ("putin-at-apec.jpg", img, "image/jpeg")}, timeout=35)
+        if response.status_code == 400:
+            print("Telegram rejection:", response.text[:800], flush=True)
         response.raise_for_status()
         result = response.json()
         if not result.get("ok"):
