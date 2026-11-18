@@ -16,7 +16,7 @@ from aggregator.telegram import TelegramClient
 from scripts.railway_cron import check_state
 
 CHANNEL = "@GVOZDIchKAAA"
-INTENT_KEY = "special-post:putin-apec-photo-20261118-v3"
+INTENT_KEY = "special-post:putin-apec-photo-20261118-v4"
 TITLE = "Путину показали его место. Буквально"
 SOURCE_URL = "https://vot-tak.tv/96544562/putin-mesto-obshee-foto-si-trump"
 TEXT = """🇨🇳 <b>ПУТИНУ ПОКАЗАЛИ ЕГО МЕСТО. БУКВАЛЬНО.</b>
