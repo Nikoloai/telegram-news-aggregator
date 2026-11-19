@@ -22,3 +22,7 @@ python main.py --dry-run --max-items 1 --max-candidates 12 --state /tmp/gvozdika
 A legitimate smoke result must include the `Итог` counters and, ideally, `previews=1`. Do not treat predeploy unit-test output as this integration test. Never aim a smoke run at the real production SQLite file. Use Telegram channel sends only for specifically approved posts and keep deduplication keys.
 
 For the 2026-11-19 incident, the one-off publisher used for post #1002 inadvertently remained the executed command after a config-only redeploy. This caused ordinary cron invocations to skip news. Restoring config alone is insufficient; always verify a newly built container.
+
+## Verified integration smoke test, 2026-11-19
+
+At 23:05 UTC, a fresh-GitHub-build cron run used a disposable SQLite state copy, exercised actual RSS sources and OpenAI generation, and returned `collected=177`, `previews=2`, `validation_failed=1`, `sent=0` (expected for dry run). This was a meaningful integration smoke, **not** an end-to-end live Telegram send. The full live publisher must be restored with a **new commit/build** and checked again; a plain config redeploy may execute the previous command.
