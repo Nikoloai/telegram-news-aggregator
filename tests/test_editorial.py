@@ -66,7 +66,8 @@ def test_air_alert_drills_and_all_clear_do_not_become_emergencies():
     for title in ("В Балтийске объявили отбой воздушной тревоги",
                   "Срочно: в Балтийске объявили отбой воздушной тревоги",
                   "В Балтийске пройдет учебная воздушная тревога",
-                  "В Балтийске вчера объявили воздушную тревогу"):
+                  "В Балтийске вчера объявили воздушную тревогу",
+                  "Разбор. Как прошла ночь воздушной тревоги в Калининградской области"):
         item = FeedItem("Test", title, "https://example.org/alert", published_at=now)
         assert not is_emergency(item, TopicFilter().match(item).topics, now), title
 
