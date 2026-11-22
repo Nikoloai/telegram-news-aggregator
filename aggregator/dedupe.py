@@ -42,6 +42,8 @@ class Deduplicator:
             return True, f"exact:{exact}"
         for row in self.storage.recent_titles(limit=500):
             old_title = row["normalized_title"]
+            if _different_air_alert_and_ship(normalized_title, old_title):
+                continue
             score = fuzz.token_set_ratio(normalized_title, old_title)
             if score >= self.fuzzy_threshold:
                 return True, f"fuzzy:{score}:{row['url']}"
@@ -61,6 +63,15 @@ GENERIC_WORDS = {
     "который", "дело", "уголовное", "новый", "россии", "российский", "суд", "после",
     "против", "заявил", "сообщил", "человек", "власти",
 }
+GENERIC_EVENT_STEMS = ("губернатор", "калининград", "беспилот", "бпла", "атаков",
+                       "атак", "дрон", "обстрел", "российск", "министерств")
+
+
+def _different_air_alert_and_ship(left: str, right: str) -> bool:
+    ship = re.compile(r'\b(?:судн|сухогруз|танкер|корабл|паром)')
+    alert = re.compile(r'\b(?:воздушн\w*\s+тревог|беспилотн\w*\s+опасност|систем\w*\s+оповещ)')
+    return bool((ship.search(left) and not ship.search(right) and alert.search(right))
+                or (ship.search(right) and not ship.search(left) and alert.search(left)))
 
 UPDATE_PATTERNS = (
     "обнов", "новые данные", "стало известно", "число .*вырос", "число .*увелич",
@@ -78,6 +89,8 @@ def _same_named_event(left: str, right: str) -> bool:
     right_groups = {i for i, group in enumerate(EVENT_GROUPS) if any(word in right for word in group)}
     if not left_groups.intersection(right_groups):
         return False
-    left_words = {word for word in left.split() if len(word) >= 6 and word not in GENERIC_WORDS}
-    right_words = {word for word in right.split() if len(word) >= 6 and word not in GENERIC_WORDS}
+    left_words = {word for word in left.split() if len(word) >= 6 and word not in GENERIC_WORDS
+                  and not word.startswith(GENERIC_EVENT_STEMS)}
+    right_words = {word for word in right.split() if len(word) >= 6 and word not in GENERIC_WORDS
+                   and not word.startswith(GENERIC_EVENT_STEMS)}
     return bool(left_words.intersection(right_words))

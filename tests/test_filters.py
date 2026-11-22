@@ -52,6 +52,15 @@ def test_topic_filter_rejects_ukraine_only_news() -> None:
     assert "not_russia_related" in result.excluded_by
 
 
+def test_baltiysk_city_is_regional_but_baltic_sea_is_not_automatically_russia():
+    for title in ("В Балтийске объявлена воздушная тревога", "Беспилотники атаковали Балтийск"):
+        item = FeedItem("Test", title, "https://example.org/regional")
+        result = TopicFilter().match(item)
+        assert result.accepted and "kaliningrad" in result.topics
+    assert not TopicFilter().match(FeedItem("Test", "В Балтийском море объявили тревогу",
+                                           "https://example.org/sea")).accepted
+
+
 def test_topic_filter_accepts_russia_context_in_description() -> None:
     result = TopicFilter().match(
         FeedItem(

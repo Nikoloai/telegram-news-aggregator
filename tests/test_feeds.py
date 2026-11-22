@@ -21,3 +21,21 @@ def test_parse_rss() -> None:
     assert items[0].url == "https://example.org/news/1"
     assert items[0].categories == ["Политика"]
     assert items[0].published_at is not None
+
+
+def test_telegram_generic_website_shortcut_does_not_replace_each_post_url():
+    from aggregator.collector import parse_telegram_page
+    source = {"name": "New Kaliningrad", "feed_url": "https://t.me/s/newkal_stream",
+              "homepage": "https://www.newkaliningrad.ru/", "enabled": True}
+    html = '''<div class="tgme_widget_message" data-post="newkal_stream/111">
+       <div class="tgme_widget_message_text">В Калининграде объявили воздушную тревогу.
+       <a href="https://newkaliningrad.ru/t">Наш канал</a></div>
+       <a class="tgme_widget_message_date"><time datetime="2026-11-21T19:00:00+00:00"></time></a></div>
+       <div class="tgme_widget_message" data-post="newkal_stream/112">
+       <div class="tgme_widget_message_text">В Балтийске объявили воздушную тревогу.
+       <a href="https://newkaliningrad.ru/t">Наш канал</a>
+       <a href="https://newkaliningrad.ru/news/123.html">Подробнее</a></div>
+       <a class="tgme_widget_message_date"><time datetime="2026-11-21T19:01:00+00:00"></time></a></div>'''
+    posts = parse_telegram_page(html, source)
+    assert posts[0].url == 'https://newkaliningrad.ru/news/123.html'
+    assert posts[1].url == 'https://t.me/newkal_stream/111'

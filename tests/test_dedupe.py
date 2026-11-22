@@ -67,6 +67,16 @@ def test_unrelated_criminal_cases_are_not_duplicates() -> None:
     assert duplicate is False
 
 
+def test_alert_and_attack_on_ship_are_distinct_even_with_same_official():
+    storage = FakeStorage()
+    storage.rows = [{"url": "https://t.me/rugrad/40243", "normalized_title": normalize_title(
+        "Следовавшее в Калининград судно атаковали беспилотники в Финском заливе губернатор Дрозденко") }]
+    duplicate, _ = Deduplicator(storage).find_duplicate(
+        "https://t.me/rugrad/40244",
+        "Беспилотная опасность сработала в Неманском районе губернатор Дрозденко сообщил об объекте")
+    assert duplicate is False
+
+
 def test_meaningful_update_detection() -> None:
     assert is_meaningful_update("Стало известно о новых данных по делу") is True
     assert is_meaningful_update("Суд рассмотрел уголовное дело") is False

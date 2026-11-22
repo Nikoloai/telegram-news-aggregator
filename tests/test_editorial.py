@@ -42,6 +42,35 @@ def test_emergency_requires_fresh_high_risk_story() -> None:
     assert not is_emergency(stale, ["war"], now)
 
 
+def test_fresh_air_alert_and_drone_attack_get_priority_without_inventing_an_attack():
+    from aggregator.editorial import rank_news
+    from aggregator.filters import TopicFilter
+    from aggregator.modes import RewriteMode, editorial_mode
+    now = datetime(2026, 11, 21, 19, tzinfo=timezone.utc)
+    alert = FeedItem("Test", "В Балтийске объявлена воздушная тревога", "https://example.org/alert", published_at=now)
+    warning = FeedItem("Test", "В Балтийске объявлена беспилотная опасность", "https://example.org/warning", published_at=now)
+    attack = FeedItem("Test", "Беспилотники атаковали Балтийск", "https://example.org/attack", published_at=now)
+    award = FeedItem("Test", "Калининградский депутат получил награду", "https://example.org/award", published_at=now)
+    for item in (alert, warning, attack):
+        match = TopicFilter().match(item)
+        assert match.accepted and "kaliningrad" in match.topics
+        assert is_emergency(item, match.topics, now)
+        assert editorial_mode(item.title) == RewriteMode.HARD_NEWS
+        assert rank_news([award, item], [], slot=0, now_utc=now)[0] == item
+    assert not is_emergency(alert, TopicFilter().match(alert).topics, now + timedelta(hours=4))
+
+
+def test_air_alert_drills_and_all_clear_do_not_become_emergencies():
+    from aggregator.filters import TopicFilter
+    now = datetime(2026, 11, 21, 19, tzinfo=timezone.utc)
+    for title in ("В Балтийске объявили отбой воздушной тревоги",
+                  "Срочно: в Балтийске объявили отбой воздушной тревоги",
+                  "В Балтийске пройдет учебная воздушная тревога",
+                  "В Балтийске вчера объявили воздушную тревогу"):
+        item = FeedItem("Test", title, "https://example.org/alert", published_at=now)
+        assert not is_emergency(item, TopicFilter().match(item).topics, now), title
+
+
 def test_correction_and_quote_detection() -> None:
     assert is_correction("Уточнение: данные в первой версии были ошибочными")
     assert extract_title_quote("Чиновник: «Система полностью готова к запуску сегодня»") == (

@@ -40,6 +40,20 @@ EMERGENCY_PATTERNS = (
     r"\bэпидем",
     r"\bсанитарн.*(?:угроз|опасност)",
 )
+LIVE_AIR_ALERT = re.compile(
+    r'\b(?:воздушн\w*\s+тревог\w*|'
+    r'беспилотн\w*\s+опасност\w*|'
+    r'(?:опасност|угроз)\w*\s+(?:атак\w*\s+)?(?:бпла|беспилот\w*)|'
+    r'сирен\w*\s+(?:воздушн\w*\s+тревог\w*|опасност\w*\s+бпла))', re.I
+)
+RECENT_DRONE_STRIKE = re.compile(
+    r'\b(?:атак\w*\s+(?:дрон\w*|беспилот\w*|бпла)|'
+    r'(?:дрон\w*|беспилот\w*|бпла)\s+(?:атак\w*|удар\w*|поразил\w*))', re.I
+)
+NON_LIVE_AIR_ALERT = re.compile(
+    r'\b(?:отбой|отмен\w*|снят\w*|заверш\w*|учебн\w*|учени\w*|трениров\w*|'
+    r'провер\w*\s+систем\w*\s+оповещен\w*|вчера|прошл\w*\s+(?:недел\w*|год\w*))', re.I
+)
 CORRECTION_PATTERNS = (
     r"\bисправлен",
     r"\bисправили\b",
@@ -98,6 +112,12 @@ def is_emergency(item: FeedItem, topics: list[str], now_utc: datetime | None = N
         return False
     lead = re.split(r"(?<=[.!?])\s+", clean_html(item.description), maxsplit=1)[0]
     text = f"{item.title} {lead}".lower()
+    # A current public air-raid warning is time-sensitive even when no strike
+    # has been confirmed. Never turn a drill or an all-clear into an attack.
+    if LIVE_AIR_ALERT.search(text) or RECENT_DRONE_STRIKE.search(text):
+        if NON_LIVE_AIR_ALERT.search(text) or re.search(r'\bв\s+20\d{2}\s+году\b', text):
+            return False
+        return True
     # A diplomat's new job after an old explosion is not a fresh emergency.
     if (re.search(r'\bвзрыв', text) and not requires_serious_tone(item.title, lead)
             and not any(re.search(pattern, text, re.I) for pattern in EMERGENCY_PATTERNS

@@ -1,4 +1,4 @@
-"""Railway two-hour cron entrypoint with fail-closed GitHub state migration.
+"""Railway scheduled entrypoint with fail-closed GitHub state migration.
 
 Never publish against an unseeded or corrupted database. GitHub Actions formerly
 persisted SQLite at branch "state"; Railway owns the migrated copy on /data.

@@ -106,7 +106,8 @@ def parse_telegram_page(content: bytes | str, source: dict[str, Any]) -> list[Fe
         # Newsrooms link their complete article. Fetch and deduplicate that primary URL.
         for link in [*content_node.select('a[href]'), *post.select('a.tgme_widget_message_link_preview[href]')]:
             allowed = source_url(str(link['href']), [source])
-            if allowed and urlsplit(allowed[0]).hostname != 't.me':
+            if (allowed and urlsplit(allowed[0]).hostname != 't.me'
+                    and urlsplit(allowed[0]).path.rstrip('/').lower() not in {'', '/t'}):
                 url = allowed[0]
                 break
         forwarded = post.select_one('.tgme_widget_message_forwarded_from')
