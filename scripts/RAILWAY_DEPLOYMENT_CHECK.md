@@ -3,7 +3,7 @@
 Normal production configuration for the existing `news-publisher` service:
 
 - Start command: `python -m scripts.railway_cron --live`
-- Cron schedule: `*/15 * * * *` (UTC); rapid checks retain the daily cap and existing release rules.
+- Cron schedule: `0 * * * *` (UTC); hourly checks retain the daily cap and existing release rules.
 - Predeploy: `python -m pytest -q`
 - State: persistent SQLite volume `/data/state.db`
 - Channel: `@GVOZDIchKAAA`
